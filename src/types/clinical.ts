@@ -1,4 +1,4 @@
-export type TipoUsuario = "estudiante" | "docente" | "administrativo" | "externo";
+export type TipoUsuario = "estudiante" | "docente" | "administrativo" | "trabajador";
 export type NivelAcademico = "pregrado" | "posgrado";
 export type ServicioDestino = "medicina" | "odontologia" | "psicologia";
 export type PrioridadTriaje = "rojo" | "naranja" | "amarillo" | "verde" | "azul";
@@ -8,6 +8,48 @@ export type OrigenDerivacion =
   | "medicina_manual"
   | "odontologia_manual"
   | "psicologia_manual";
+export type CoberturaAtencion = "bienestar_universitario" | "iess";
+
+export type CarreraCatalogo = {
+  id: string;
+  nombre: string;
+  activo: boolean;
+};
+
+export type ProgramaPosgradoCatalogo = {
+  id: string;
+  nombre: string;
+  activo: boolean;
+};
+
+export type FacultadCatalogo = {
+  id: string;
+  nombre: string;
+  activo: boolean;
+  carreras: CarreraCatalogo[];
+  posgrados: ProgramaPosgradoCatalogo[];
+};
+
+export type DependenciaCatalogo = {
+  id: string;
+  nombre: string;
+  activo: boolean;
+};
+
+export type CicloCatalogo = {
+  id: string;
+  nombre: string;
+  activo: boolean;
+};
+
+export type PeriodoAcademicoCatalogo = {
+  id: string;
+  nombre: string;
+  fechaInicio: string;
+  fechaFin: string;
+  activo: boolean;
+  tipo: "ordinario" | "interciclo";
+};
 
 export type Paciente = {
   id: string;
@@ -40,6 +82,7 @@ export type Paciente = {
   dependencia?: string;
   cargo?: string;
   institucionProcedencia?: string;
+  coberturaAtencion?: CoberturaAtencion;
   antecedentesPersonales?: string;
   antecedentesFamiliares?: string;
   alergias?: string;
@@ -205,6 +248,7 @@ export type Derivacion = {
   origen: OrigenDerivacion;
   fechaInicioAtencion?: string;
   atendidoPorUserId?: string;
+  coberturaAtencion?: CoberturaAtencion;
 };
 
 export type Atencion = {
@@ -237,6 +281,7 @@ export type Atencion = {
   certificados?: CertificadoMedico[];
   procedimiento?: ProcedimientoAtencion;
   referenciaDerivacion?: ReferenciaDerivacion;
+  coberturaAtencion?: CoberturaAtencion;
   createdAt?: string;
   updatedAt?: string;
 };

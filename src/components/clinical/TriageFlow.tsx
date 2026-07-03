@@ -14,14 +14,7 @@ import {
 import { SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
 import type { Derivacion, Paciente, PrioridadTriaje, ServicioDestino } from "@/types/clinical";
 import { DynamicAcademicFields, Field, inputClass, selectClass } from "./ClinicalFormFields";
-
-const triageOptions: Array<{ value: PrioridadTriaje; label: string; color: string }> = [
-  { value: "rojo", label: "Emergencia", color: "#DC2626" },
-  { value: "naranja", label: "Muy urgente", color: "#F97316" },
-  { value: "amarillo", label: "Urgente", color: "#EAB308" },
-  { value: "verde", label: "Menor urgencia", color: "#16A34A" },
-  { value: "azul", label: "No urgente", color: "#2563EB" },
-];
+import { TriageSelect } from "./TriageBadge";
 
 const emptyPaciente: Partial<Paciente> = {
   cedula: "",
@@ -60,6 +53,16 @@ function currentUserId() {
   } catch {
     return "usuario-simulado";
   }
+}
+
+function calculateAgeFromBirthDate(value: string) {
+  const birth = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(birth.getTime())) return "";
+  const today = new Date();
+  let years = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) years -= 1;
+  return String(Math.max(years, 0));
 }
 
 function calculateImc(peso: string, talla: string) {
@@ -172,6 +175,7 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
       horaLlegada: now.toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" }),
       derivadoPorUserId: currentUserId(),
       origen: "enfermeria",
+      coberturaAtencion: paciente.coberturaAtencion,
     });
 
     setMessage(
@@ -309,9 +313,14 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
               <Field label="Fecha nacimiento">
                 <input
                   type="date"
+                  max={new Date().toISOString().slice(0, 10)}
                   value={paciente.fechaNacimiento ?? ""}
                   onChange={(event) =>
-                    setPaciente((row) => ({ ...row, fechaNacimiento: event.target.value }))
+                    setPaciente((row) => ({
+                      ...row,
+                      fechaNacimiento: event.target.value,
+                      edad: calculateAgeFromBirthDate(event.target.value),
+                    }))
                   }
                   className={inputClass}
                 />
@@ -393,23 +402,7 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-[#64748B]">
               Nivel de triaje
             </p>
-            <div className="grid gap-2">
-              {triageOptions.map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => setPrioridadTriaje(item.value)}
-                  className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm font-black transition ${
-                    prioridadTriaje === item.value
-                      ? "border-[#082F49] bg-[#F8FBFD]"
-                      : "border-[#D7E3EC] bg-white"
-                  }`}
-                >
-                  <span style={{ color: item.color }}>{item.value.toUpperCase()}</span>
-                  <span className="text-xs text-[#64748B]">{item.label}</span>
-                </button>
-              ))}
-            </div>
+            <TriageSelect value={prioridadTriaje} onChange={setPrioridadTriaje} />
           </div>
           <div className="space-y-3">
             <Field label="Servicio destino">

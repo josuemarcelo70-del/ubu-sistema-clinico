@@ -263,6 +263,12 @@ export function obtenerDerivacionesPendientesPorServicio(servicio: ServicioDesti
   );
 }
 
+export function obtenerDerivacionesActivasPorServicio(servicio: ServicioDestino) {
+  return obtenerDerivacionesPorServicio(servicio).filter(
+    (derivacion) => derivacion.estado === "pendiente" || derivacion.estado === "en_atencion",
+  );
+}
+
 export function obtenerAtenciones() {
   return readStorage<Atencion>(ATENCIONES_KEY);
 }
@@ -384,14 +390,12 @@ export function hasHistoriaClinica(paciente?: Partial<Paciente>) {
   if (!paciente) return false;
   const cedula = paciente.cedula?.trim();
   if (!cedula) return false;
-  const historiaPorCedula = obtenerHistoriaClinicaPorNumero(cedula);
-  if (historiaPorCedula) return true;
-  return [
-    paciente.historiaClinica,
-    paciente.historiaClinicaNumero,
-    paciente.numeroHistoriaClinica,
-    paciente.hc,
-  ].some((value) => String(value ?? "").trim() === cedula);
+  // Solo cuenta como "tiene historia clínica" si existe un registro real en
+  // ubu_historias_clinicas: que el campo historiaClinica del paciente coincida
+  // con la cédula NO basta (se asigna automáticamente antes de aperturar la HC).
+  if (obtenerHistoriaClinicaPorNumero(cedula)) return true;
+  if (paciente.id && obtenerHistoriaClinicaPorPaciente(paciente.id)) return true;
+  return false;
 }
 
 export function getHoraLlegada(derivacion: Derivacion) {

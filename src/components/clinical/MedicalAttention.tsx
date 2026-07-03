@@ -15,6 +15,7 @@ import { cie10Catalog } from "@/lib/cie10-catalog";
 import { mockUsers, SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
 import type {
   CertificadoMedico,
+  CoberturaAtencion,
   Derivacion,
   DiagnosticoAtencion,
   EstudioLaboratorio,
@@ -136,10 +137,10 @@ function patientProgram(paciente?: Paciente) {
   if (paciente.tipoUsuario === "docente") {
     return [paciente.facultadNombre || paciente.dependencia, paciente.cargo].filter(Boolean).join(" / ");
   }
-  if (paciente.tipoUsuario === "administrativo") {
+  if (paciente.tipoUsuario === "administrativo" || paciente.tipoUsuario === "trabajador") {
     return [paciente.dependencia, paciente.cargo].filter(Boolean).join(" / ");
   }
-  return paciente.institucionProcedencia || "Externo";
+  return "";
 }
 
 function patientPeriod(paciente?: Paciente) {
@@ -748,45 +749,60 @@ export function MedicalAttention({
   );
   const cedula = paciente?.cedula?.trim() || "";
   const historiaClinica = cedula;
-  const [vitals, setVitals] = useState<VitalSignsDraft>(() => makeVitalsDraft(signos));
-  const [motivoConsulta, setMotivoConsulta] = useState(derivacion.motivoConsultaBreve);
-  const [fechaAtencion, setFechaAtencion] = useState(new Date().toISOString().slice(0, 10));
-  const [enfermedadActual, setEnfermedadActual] = useState("");
-  const [examenFisico, setExamenFisico] = useState("");
+  const [vitals, setVitals] = useState<VitalSignsDraft>(() => makeVitalsDraft(atencionBase?.signosVitales ?? signos));
+  const [motivoConsulta, setMotivoConsulta] = useState(atencionBase?.motivoConsulta ?? derivacion.motivoConsultaBreve);
+  const [fechaAtencion, setFechaAtencion] = useState(
+    atencionBase?.fechaAtencion || new Date().toISOString().slice(0, 10),
+  );
+  const [enfermedadActual, setEnfermedadActual] = useState(atencionBase?.enfermedadActual ?? "");
+  const [examenFisico, setExamenFisico] = useState(atencionBase?.examenFisico ?? "");
   const [diagnosticSearch, setDiagnosticSearch] = useState("");
   const [selectedDiagnostic, setSelectedDiagnostic] = useState<DiagnosticoAtencion>();
   const [diagnosticType, setDiagnosticType] = useState<DiagnosticoAtencion["tipo"]>("Definitivo");
-  const [diagnosticos, setDiagnosticos] = useState<DiagnosticoAtencion[]>([]);
-  const [planTratamiento, setPlanTratamiento] = useState("");
+  const [diagnosticos, setDiagnosticos] = useState<DiagnosticoAtencion[]>(atencionBase?.diagnosticos ?? []);
+  const [planTratamiento, setPlanTratamiento] = useState(atencionBase?.planTratamiento ?? "");
   const [medSearch, setMedSearch] = useState("");
   const [medDose, setMedDose] = useState("");
   const [medQty, setMedQty] = useState("1");
   const [selectedMed, setSelectedMed] = useState<(typeof medicamentosCatalog)[number]>();
-  const [medicamentos, setMedicamentos] = useState<MedicamentoOrden[]>([]);
-  const [ordenFarmacia, setOrdenFarmacia] = useState<OrdenFarmacia>();
+  const [medicamentos, setMedicamentos] = useState<MedicamentoOrden[]>(
+    atencionBase?.ordenFarmacia?.medicamentos ?? [],
+  );
+  const [ordenFarmacia, setOrdenFarmacia] = useState<OrdenFarmacia | undefined>(atencionBase?.ordenFarmacia);
   const [labSearch, setLabSearch] = useState("");
   const [selectedLab, setSelectedLab] = useState<(typeof laboratorioCatalog)[number]>();
-  const [estudios, setEstudios] = useState<EstudioLaboratorio[]>([]);
-  const [ordenLaboratorio, setOrdenLaboratorio] = useState<OrdenLaboratorio>();
+  const [estudios, setEstudios] = useState<EstudioLaboratorio[]>(atencionBase?.ordenLaboratorio?.estudios ?? []);
+  const [ordenLaboratorio, setOrdenLaboratorio] = useState<OrdenLaboratorio | undefined>(
+    atencionBase?.ordenLaboratorio,
+  );
   const [indicacionTexto, setIndicacionTexto] = useState("");
-  const [indicacionEnfermeria, setIndicacionEnfermeria] = useState<IndicacionEnfermeria>();
-  const [certificados, setCertificados] = useState<CertificadoMedico[]>([]);
+  const [indicacionEnfermeria, setIndicacionEnfermeria] = useState<IndicacionEnfermeria | undefined>(
+    atencionBase?.indicacionEnfermeria,
+  );
+  const [certificados, setCertificados] = useState<CertificadoMedico[]>(atencionBase?.certificados ?? []);
   const [certModal, setCertModal] = useState<"atencion" | "reposo" | undefined>();
-  const [procedimiento, setProcedimiento] = useState<ProcedimientoAtencion>({
-    realizado: false,
-    tipo: "",
-    descripcion: "",
-    observaciones: "",
-    complicaciones: "",
-  });
-  const [referencia, setReferencia] = useState<ReferenciaDerivacion>({
-    emitida: false,
-    motivo: "",
-    destino: "",
-    diagnostico: "",
-    prioridad: "Normal",
-    observaciones: "",
-  });
+  const [procedimiento, setProcedimiento] = useState<ProcedimientoAtencion>(
+    atencionBase?.procedimiento ?? {
+      realizado: false,
+      tipo: "",
+      descripcion: "",
+      observaciones: "",
+      complicaciones: "",
+    },
+  );
+  const [referencia, setReferencia] = useState<ReferenciaDerivacion>(
+    atencionBase?.referenciaDerivacion ?? {
+      emitida: false,
+      motivo: "",
+      destino: "",
+      diagnostico: "",
+      prioridad: "Normal",
+      observaciones: "",
+    },
+  );
+  const [coberturaAtencion, setCoberturaAtencion] = useState<CoberturaAtencion | undefined>(
+    atencionBase?.coberturaAtencion ?? derivacion.coberturaAtencion ?? paciente?.coberturaAtencion,
+  );
   const [message, setMessage] = useState("");
   const [confirmFarmacia, setConfirmFarmacia] = useState(false);
   const [success, setSuccess] = useState<{ title: string; code: string }>();
@@ -1007,37 +1023,43 @@ export function MedicalAttention({
     const now = new Date().toISOString();
     const farmaciaFinal = ordenFarmacia ? { ...ordenFarmacia, medicamentos } : undefined;
     const laboratorioFinal = ordenLaboratorio ? { ...ordenLaboratorio, estudios } : undefined;
-    finalizarAtencion(current.id, {
-      cedulaPaciente: cedula,
-      historiaClinica: cedula,
-      fechaAtencion,
-      horaInicio: current.horaInicio,
-      profesionalNombre: doctor.nombre,
-      origen: derivacion.origen,
-      signosVitales: {
-        ...vitals,
-        id: signos?.id || createId("sv-atencion"),
-        pacienteId: paciente.id,
-        fecha: signos?.fecha || now,
-        registradoPorUserId: signos?.registradoPorUserId || doctor.id,
-      },
-      motivoConsulta: motivoConsulta.trim(),
-      enfermedadActual: enfermedadActual.trim(),
-      examenFisico: examenFisico.trim(),
-      diagnosticos,
-      diagnosticoPrincipal,
-      planTratamiento: planTratamiento.trim(),
-      ordenFarmacia: farmaciaFinal,
-      ordenLaboratorio: laboratorioFinal,
-      indicacionEnfermeria,
-      certificados,
-      procedimiento,
-      referenciaDerivacion: {
-        ...referencia,
-        diagnostico: referencia.diagnostico || (diagnosticoPrincipal ? `${diagnosticoPrincipal.codigo} ${diagnosticoPrincipal.descripcion}` : ""),
-      },
-      updatedAt: now,
-    });
+    try {
+      finalizarAtencion(current.id, {
+        cedulaPaciente: cedula,
+        historiaClinica: cedula,
+        fechaAtencion,
+        horaInicio: current.horaInicio,
+        profesionalNombre: doctor.nombre,
+        origen: derivacion.origen,
+        signosVitales: {
+          ...vitals,
+          id: signos?.id || createId("sv-atencion"),
+          pacienteId: paciente.id,
+          fecha: signos?.fecha || now,
+          registradoPorUserId: signos?.registradoPorUserId || doctor.id,
+        },
+        motivoConsulta: motivoConsulta.trim(),
+        enfermedadActual: enfermedadActual.trim(),
+        examenFisico: examenFisico.trim(),
+        diagnosticos,
+        diagnosticoPrincipal,
+        planTratamiento: planTratamiento.trim(),
+        ordenFarmacia: farmaciaFinal,
+        ordenLaboratorio: laboratorioFinal,
+        indicacionEnfermeria,
+        certificados,
+        procedimiento,
+        referenciaDerivacion: {
+          ...referencia,
+          diagnostico: referencia.diagnostico || (diagnosticoPrincipal ? `${diagnosticoPrincipal.codigo} ${diagnosticoPrincipal.descripcion}` : ""),
+        },
+        coberturaAtencion,
+        updatedAt: now,
+      });
+    } catch {
+      setMessage("No se pudo guardar la atención. El paciente permanece en la cola; intente nuevamente.");
+      return;
+    }
     onSaved("Atención guardada en expediente. El paciente salió de la cola de Medicina.");
   }
 
@@ -1046,22 +1068,29 @@ export function MedicalAttention({
     if (!current) return;
     const farmaciaFinal = ordenFarmacia ? { ...ordenFarmacia, medicamentos } : undefined;
     const laboratorioFinal = ordenLaboratorio ? { ...ordenLaboratorio, estudios } : undefined;
-    actualizarAtencion(current.id, {
-      cedulaPaciente: cedula,
-      historiaClinica: cedula,
-      motivoConsulta,
-      enfermedadActual,
-      examenFisico,
-      diagnosticos,
-      diagnosticoPrincipal,
-      planTratamiento,
-      ordenFarmacia: farmaciaFinal,
-      ordenLaboratorio: laboratorioFinal,
-      indicacionEnfermeria,
-      certificados,
-      procedimiento,
-      referenciaDerivacion: referencia,
-    });
+    try {
+      actualizarAtencion(current.id, {
+        cedulaPaciente: cedula,
+        historiaClinica: cedula,
+        motivoConsulta,
+        enfermedadActual,
+        examenFisico,
+        diagnosticos,
+        diagnosticoPrincipal,
+        planTratamiento,
+        ordenFarmacia: farmaciaFinal,
+        ordenLaboratorio: laboratorioFinal,
+        indicacionEnfermeria,
+        certificados,
+        procedimiento,
+        referenciaDerivacion: referencia,
+        coberturaAtencion,
+      });
+    } catch {
+      setMessage("No se pudo guardar el borrador. Intente nuevamente.");
+      return;
+    }
+    setMessage("Borrador guardado. El paciente permanece en la cola.");
   }
 
   return (
@@ -1125,6 +1154,23 @@ export function MedicalAttention({
               <MiniInfo label="Tipo de atención" value={atencionBase?.tipoAtencion === "apertura_hc" ? "Primera atencion" : "Atencion subsecuente"} />
               <MiniInfo label="Hora de llegada" value={derivacion.horaLlegada} />
               <MiniInfo label="Origen" value={derivacion.origen === "enfermeria" ? "Enfermería / Triaje" : "Medicina"} />
+              {paciente?.tipoUsuario && paciente.tipoUsuario !== "estudiante" ? (
+                <Field label="Cobertura de atención">
+                  <select
+                    value={coberturaAtencion ?? ""}
+                    onChange={(event) =>
+                      setCoberturaAtencion((event.target.value || undefined) as CoberturaAtencion | undefined)
+                    }
+                    className={selectClass}
+                  >
+                    <option value="">Sin registrar</option>
+                    <option value="bienestar_universitario">Bienestar Universitario</option>
+                    <option value="iess">IESS</option>
+                  </select>
+                </Field>
+              ) : (
+                <MiniInfo label="Cobertura de atención" value={undefined} />
+              )}
             </div>
           </Section>
 

@@ -1,7 +1,18 @@
 "use client";
 
-import { ciclos, facultades, getFacultadById, periodosAcademicos } from "@/lib/academic-catalogs";
-import type { NivelAcademico, Paciente, TipoUsuario } from "@/types/clinical";
+import { useEffect } from "react";
+
+import {
+  getFacultadById,
+  getPeriodoAcademicoActivo,
+  obtenerCiclosActivos,
+  obtenerDependenciasActivas,
+  obtenerFacultadesActivas,
+  obtenerPeriodosAcademicosActivos,
+  obtenerPosgradosPorFacultad,
+} from "@/lib/academic-catalogs";
+import type { CoberturaAtencion, NivelAcademico, Paciente, TipoUsuario } from "@/types/clinical";
+import { AutocompleteField, type AutocompleteOption } from "./AutocompleteField";
 
 type FieldProps = {
   label: string;
@@ -24,13 +35,25 @@ export const inputClass =
 
 export const selectClass = inputClass;
 
+const tipoUsuarioOptions: AutocompleteOption[] = [
+  { value: "estudiante", label: "Estudiante" },
+  { value: "docente", label: "Docente" },
+  { value: "administrativo", label: "Administrativo" },
+  { value: "trabajador", label: "Trabajador" },
+];
+
+const coberturaOptions: Array<{ value: CoberturaAtencion; label: string }> = [
+  { value: "bienestar_universitario", label: "Bienestar Universitario" },
+  { value: "iess", label: "IESS" },
+];
+
 export function updateCatalogNames(values: Partial<Paciente>) {
   const facultad = getFacultadById(values.facultadId);
   const carrera = facultad?.carreras.find((item) => item.id === values.carreraId);
   const posgrado = facultad?.posgrados.find(
     (item) => item.id === values.programaPosgradoId,
   );
-  const periodo = periodosAcademicos.find(
+  const periodo = obtenerPeriodosAcademicosActivos().find(
     (item) => item.id === values.periodoAcademicoId,
   );
 
@@ -52,9 +75,52 @@ export function DynamicAcademicFields({
 }) {
   const tipoUsuario = values.tipoUsuario ?? "estudiante";
   const nivelAcademico = values.nivelAcademico ?? "pregrado";
+  const facultades = obtenerFacultadesActivas();
+  const ciclos = obtenerCiclosActivos();
+  const periodosAcademicos = obtenerPeriodosAcademicosActivos();
+  const dependencias = obtenerDependenciasActivas();
   const facultad = getFacultadById(values.facultadId);
+  const carrerasActivas = (facultad?.carreras ?? []).filter((carrera) => carrera.activo);
+  const posgradosActivos = obtenerPosgradosPorFacultad(values.facultadId);
+
+  const facultadOptions: AutocompleteOption[] = facultades.map((item) => ({
+    value: item.id,
+    label: item.nombre,
+  }));
+  const carreraOptions: AutocompleteOption[] = carrerasActivas.map((item) => ({
+    value: item.id,
+    label: item.nombre,
+  }));
+  const posgradoOptions: AutocompleteOption[] = posgradosActivos.map((item) => ({
+    value: item.id,
+    label: item.nombre,
+  }));
+  const cicloOptions: AutocompleteOption[] = ciclos.map((item) => ({ value: item.nombre, label: item.nombre }));
+  const periodoOptions: AutocompleteOption[] = periodosAcademicos.map((item) => ({
+    value: item.id,
+    label: item.nombre,
+  }));
+  const dependenciaOptions: AutocompleteOption[] = dependencias.map((item) => ({
+    value: item.nombre,
+    label: item.nombre,
+  }));
+
+  const periodoActivoHoy = getPeriodoAcademicoActivo();
+
+  // El periodo académico se recalcula según la fecha actual al abrir el formulario,
+  // sin depender solo del valor previamente guardado en la historia clínica.
+  useEffect(() => {
+    if ((values.tipoUsuario ?? "estudiante") === "estudiante" && periodoActivoHoy) {
+      onChange({
+        periodoAcademicoId: periodoActivoHoy.id,
+        periodoAcademicoNombre: periodoActivoHoy.nombre,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function changeTipoUsuario(next: TipoUsuario) {
+    const nextPeriodo = next === "estudiante" ? getPeriodoAcademicoActivo() : undefined;
     onChange({
       tipoUsuario: next,
       nivelAcademico: next === "estudiante" ? "pregrado" : undefined,
@@ -65,11 +131,11 @@ export function DynamicAcademicFields({
       programaPosgradoId: "",
       programaPosgradoNombre: "",
       ciclo: "",
-      periodoAcademicoId: "",
-      periodoAcademicoNombre: "",
+      periodoAcademicoId: nextPeriodo?.id ?? "",
+      periodoAcademicoNombre: nextPeriodo?.nombre ?? "",
       dependencia: "",
       cargo: "",
-      institucionProcedencia: "",
+      coberturaAtencion: undefined,
     });
   }
 
@@ -87,16 +153,11 @@ export function DynamicAcademicFields({
   return (
     <>
       <Field label="Tipo de usuario">
-        <select
-          value={tipoUsuario}
-          onChange={(event) => changeTipoUsuario(event.target.value as TipoUsuario)}
-          className={selectClass}
-        >
-          <option value="estudiante">Estudiante</option>
-          <option value="docente">Docente</option>
-          <option value="administrativo">Administrativo</option>
-          <option value="externo">Externo</option>
-        </select>
+        <AutocompleteField
+          value={tipoUsuarioOptions.find((option) => option.value === tipoUsuario)?.label ?? ""}
+          options={tipoUsuarioOptions}
+          onChange={(value, option) => changeTipoUsuario((option?.value ?? value) as TipoUsuario)}
+        />
       </Field>
 
       {tipoUsuario === "estudiante" && (
@@ -114,131 +175,130 @@ export function DynamicAcademicFields({
             </select>
           </Field>
           <Field label="Facultad">
-            <select
-              value={values.facultadId ?? ""}
-              onChange={(event) =>
+            <AutocompleteField
+              value={values.facultadNombre ?? ""}
+              options={facultadOptions}
+              onChange={(value, option) =>
                 onChange(
                   updateCatalogNames({
                     ...values,
-                    facultadId: event.target.value,
+                    facultadId: option?.value ?? "",
+                    facultadNombre: option?.label ?? value,
                     carreraId: "",
+                    carreraNombre: "",
                     programaPosgradoId: "",
+                    programaPosgradoNombre: "",
                   }),
                 )
               }
-              className={selectClass}
-            >
-              <option value="">Seleccione...</option>
-              {facultades.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.nombre}
-                </option>
-              ))}
-            </select>
+            />
           </Field>
           {nivelAcademico === "pregrado" ? (
             <>
               <Field label="Carrera">
-                <select
-                  value={values.carreraId ?? ""}
-                  onChange={(event) =>
-                    onChange(updateCatalogNames({ ...values, carreraId: event.target.value }))
+                <AutocompleteField
+                  value={values.carreraNombre ?? ""}
+                  options={carreraOptions}
+                  disabled={!values.facultadId}
+                  onChange={(value, option) =>
+                    onChange(
+                      updateCatalogNames({
+                        ...values,
+                        carreraId: option?.value ?? "",
+                        carreraNombre: option?.label ?? value,
+                      }),
+                    )
                   }
-                  className={selectClass}
-                >
-                  <option value="">Seleccione...</option>
-                  {facultad?.carreras.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.nombre}
-                    </option>
-                  ))}
-                </select>
+                />
+                {values.facultadId && carreraOptions.length === 0 && (
+                  <span className="mt-1 block text-xs font-medium text-[#94A3B8]">
+                    No hay carreras configuradas para esta facultad.
+                  </span>
+                )}
               </Field>
               <Field label="Ciclo">
-                <select
+                <AutocompleteField
                   value={values.ciclo ?? ""}
-                  onChange={(event) => onChange({ ciclo: event.target.value })}
-                  className={selectClass}
-                >
-                  <option value="">Seleccione...</option>
-                  {ciclos.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
+                  options={cicloOptions}
+                  onChange={(value, option) => onChange({ ciclo: option?.label ?? value })}
+                />
               </Field>
             </>
           ) : (
             <Field label="Programa posgrado">
-              <select
-                value={values.programaPosgradoId ?? ""}
-                onChange={(event) =>
+              <AutocompleteField
+                value={values.programaPosgradoNombre ?? ""}
+                options={posgradoOptions}
+                disabled={!values.facultadId}
+                onChange={(value, option) =>
                   onChange(
                     updateCatalogNames({
                       ...values,
-                      programaPosgradoId: event.target.value,
+                      programaPosgradoId: option?.value ?? "",
+                      programaPosgradoNombre: option?.label ?? value,
                     }),
                   )
                 }
-                className={selectClass}
-              >
-                <option value="">Seleccione...</option>
-                {facultad?.posgrados.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.nombre}
-                  </option>
-                ))}
-              </select>
+              />
             </Field>
           )}
           <Field label="Periodo académico">
-            <select
-              value={values.periodoAcademicoId ?? ""}
-              onChange={(event) =>
+            <AutocompleteField
+              value={values.periodoAcademicoNombre ?? ""}
+              options={periodoOptions}
+              onChange={(value, option) =>
                 onChange(
                   updateCatalogNames({
                     ...values,
-                    periodoAcademicoId: event.target.value,
+                    periodoAcademicoId: option?.value ?? "",
+                    periodoAcademicoNombre: option?.label ?? value,
                   }),
                 )
               }
-              className={selectClass}
-            >
-              <option value="">Seleccione...</option>
-              {periodosAcademicos.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.nombre}
-                </option>
-              ))}
-            </select>
+            />
+            {!values.periodoAcademicoNombre && !periodoActivoHoy && (
+              <span className="mt-1 block text-xs font-medium text-[#DC2626]">
+                Sin periodo académico configurado para la fecha actual.
+              </span>
+            )}
           </Field>
         </>
       )}
 
-      {tipoUsuario === "docente" && (
+      {(tipoUsuario === "docente" || tipoUsuario === "administrativo" || tipoUsuario === "trabajador") && (
         <>
-          <Field label="Facultad">
+          <Field label="Cobertura de atención">
             <select
-              value={values.facultadId ?? ""}
+              value={values.coberturaAtencion ?? ""}
               onChange={(event) =>
-                onChange(updateCatalogNames({ ...values, facultadId: event.target.value }))
+                onChange({ coberturaAtencion: (event.target.value || undefined) as CoberturaAtencion | undefined })
               }
               className={selectClass}
             >
               <option value="">Seleccione...</option>
-              {facultades.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.nombre}
+              {coberturaOptions.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label="Dependencia">
-            <input
+          {tipoUsuario === "docente" && (
+            <Field label="Facultad">
+              <AutocompleteField
+                value={values.facultadNombre ?? ""}
+                options={facultadOptions}
+                onChange={(value, option) =>
+                  onChange(updateCatalogNames({ ...values, facultadId: option?.value ?? "", facultadNombre: option?.label ?? value }))
+                }
+              />
+            </Field>
+          )}
+          <Field label="Dependencia / área">
+            <AutocompleteField
               value={values.dependencia ?? ""}
-              onChange={(event) => onChange({ dependencia: event.target.value })}
-              className={inputClass}
+              options={dependenciaOptions}
+              onChange={(value) => onChange({ dependencia: value })}
             />
           </Field>
           <Field label="Cargo">
@@ -249,35 +309,6 @@ export function DynamicAcademicFields({
             />
           </Field>
         </>
-      )}
-
-      {tipoUsuario === "administrativo" && (
-        <>
-          <Field label="Dependencia">
-            <input
-              value={values.dependencia ?? ""}
-              onChange={(event) => onChange({ dependencia: event.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Cargo">
-            <input
-              value={values.cargo ?? ""}
-              onChange={(event) => onChange({ cargo: event.target.value })}
-              className={inputClass}
-            />
-          </Field>
-        </>
-      )}
-
-      {tipoUsuario === "externo" && (
-        <Field label="Institución procedencia">
-          <input
-            value={values.institucionProcedencia ?? ""}
-            onChange={(event) => onChange({ institucionProcedencia: event.target.value })}
-            className={inputClass}
-          />
-        </Field>
       )}
     </>
   );

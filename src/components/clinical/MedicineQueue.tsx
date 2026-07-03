@@ -16,12 +16,13 @@ import {
   hasHistoriaClinica,
   iniciarAtencionDesdeDerivacion,
   obtenerAtenciones,
+  obtenerAtencionEnProcesoPorDerivacion,
+  obtenerDerivacionesActivasPorServicio,
   obtenerDerivacionesPendientesPorServicio,
   obtenerPacientes,
   obtenerSignosPorId,
 } from "@/lib/clinical-storage";
 import { cie10Catalog } from "@/lib/cie10-catalog";
-import { ciclos, facultades, periodosAcademicos } from "@/lib/academic-catalogs";
 import { SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
 import type {
   Atencion,
@@ -34,13 +35,12 @@ import type {
   PrioridadTriaje,
   ServicioDestino,
   SignosVitales,
-  TipoUsuario,
 } from "@/types/clinical";
 import { Modal } from "@/components/ui/Modal";
 import { AutocompleteField, type AutocompleteOption } from "./AutocompleteField";
 import { DynamicAcademicFields, Field, inputClass, selectClass } from "./ClinicalFormFields";
 import { MedicalAttention } from "./MedicalAttention";
-import { TriageBadge } from "./TriageBadge";
+import { TriageBadge, TriageSelect } from "./TriageBadge";
 
 type QueueRow = {
   derivacion: Derivacion;
@@ -91,10 +91,10 @@ function patientProgram(paciente?: Paciente) {
   if (paciente.tipoUsuario === "docente") {
     return [paciente.facultadNombre || paciente.dependencia, paciente.cargo].filter(Boolean).join(" / ");
   }
-  if (paciente.tipoUsuario === "administrativo") {
+  if (paciente.tipoUsuario === "administrativo" || paciente.tipoUsuario === "trabajador") {
     return [paciente.dependencia, paciente.cargo].filter(Boolean).join(" / ");
   }
-  return paciente.institucionProcedencia || "Externo";
+  return "";
 }
 
 function patientPeriod(paciente?: Paciente) {
@@ -140,7 +140,7 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
     void refreshKey;
     const pacientes = obtenerPacientes();
     const term = query.trim().toLowerCase();
-    return obtenerDerivacionesPendientesPorServicio("medicina")
+    return obtenerDerivacionesActivasPorServicio("medicina")
       .map((derivacion) => {
         const paciente = pacientes.find((item) => item.id === derivacion.pacienteId);
         return {
@@ -177,6 +177,12 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
   }, [query, refreshKey]);
 
   function startAttention(row: QueueRow, tipo: "apertura_hc" | "subsecuente") {
+    const enProceso = obtenerAtencionEnProcesoPorDerivacion(row.derivacion.id);
+    if (enProceso) {
+      // Ya hay una atención en curso (borrador): se retoma sin reiniciar el registro.
+      setAttentionTarget(row);
+      return;
+    }
     iniciarAtencionDesdeDerivacion(row.derivacion, currentUserId(), tipo);
     const updated = {
       ...row,
@@ -276,7 +282,7 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
                 <th>Tipo de usuario</th>
                 <th>Motivo de consulta</th>
                 <th>Servicio origen</th>
-                <th>Estado</th>
+                <th>Historia / Seguimiento</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -284,6 +290,8 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
               {rows.map((row) => {
                 const paciente = row.paciente;
                 const existsHc = hasHistoriaClinica(paciente);
+                const enProceso = obtenerAtencionEnProcesoPorDerivacion(row.derivacion.id);
+                const enAtencion = row.derivacion.estado === "en_atencion";
                 return (
                   <tr key={row.derivacion.id} className={row.derivacion.prioridadTriaje === "rojo" || row.derivacion.prioridadTriaje === "naranja" ? "bg-[#FFF7F7]" : ""}>
                     <td>
@@ -306,27 +314,38 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
                       {row.derivacion.origen === "enfermeria" ? "Enfermería / Triaje" : "Medicina"}
                     </td>
                     <td>
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-black ${
-                          existsHc
-                            ? "bg-[#DCFCE7] text-[#166534]"
-                            : "bg-[#FFE4E6] text-[#BE123C]"
-                        }`}
-                      >
-                        {existsHc ? "HC ACTIVA" : "NO CONSTA EN BASE"}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-black ${
+                            existsHc
+                              ? "bg-[#DCFCE7] text-[#166534]"
+                              : "bg-[#FFE4E6] text-[#BE123C]"
+                          }`}
+                        >
+                          {existsHc ? "HC ACTIVA" : "NO CONSTA EN BASE"}
+                        </span>
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-black ${
+                            enAtencion
+                              ? "bg-[#DBEAFE] text-[#1E3A8A]"
+                              : "bg-[#F1F5F9] text-[#334155]"
+                          }`}
+                        >
+                          {enAtencion ? "EN ATENCIÓN" : "EN ESPERA"}
+                        </span>
+                      </div>
                     </td>
                     <td>
                       <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => {
-                          if (existsHc) startAttention(row, "subsecuente");
-                          else setHcTarget(row);
+                          if (!existsHc) setHcTarget(row);
+                          else startAttention(row, "subsecuente");
                         }}
                         className="ubu-btn ubu-btn-info ubu-btn-sm"
                       >
-                        {existsHc ? "Iniciar atención" : "Aperturar HC"}
+                        {!existsHc ? "Aperturar HC" : enProceso ? "Continuar atención" : "Iniciar atención"}
                       </button>
                       <button
                         type="button"
@@ -446,8 +465,19 @@ function AddPatientModal({
   }
 
   function save() {
-    if (!paciente.cedula || !paciente.apellidos || !paciente.nombres || !motivo) {
-      setModalMessage("Complete cédula, apellidos, nombres y motivo.");
+    if (
+      !paciente.cedula ||
+      !paciente.apellidos ||
+      !paciente.nombres ||
+      !paciente.sexo ||
+      !paciente.fechaNacimiento ||
+      !motivo
+    ) {
+      setModalMessage("Complete cédula, apellidos, nombres, sexo, fecha de nacimiento y motivo de consulta.");
+      return;
+    }
+    if (paciente.fechaNacimiento > new Date().toISOString().slice(0, 10)) {
+      setModalMessage("La fecha de nacimiento no puede ser una fecha futura.");
       return;
     }
 
@@ -486,6 +516,7 @@ function AddPatientModal({
       horaLlegada,
       derivadoPorUserId: currentUserId(),
       origen: "medicina_manual",
+      coberturaAtencion: paciente.coberturaAtencion,
     });
     const after = obtenerDerivacionesPendientesPorServicio(servicioDestino).length;
     onSaved(
@@ -535,7 +566,7 @@ function AddPatientModal({
             <Field label="Apellidos *">
               <input value={paciente.apellidos ?? ""} onChange={(event) => setPaciente((row) => ({ ...row, apellidos: event.target.value }))} className={inputClass} />
             </Field>
-            <Field label="Sexo">
+            <Field label="Sexo *">
               <select value={paciente.sexo ?? ""} onChange={(event) => setPaciente((row) => ({ ...row, sexo: event.target.value }))} className={selectClass}>
                 <option value="">Seleccione...</option>
                 <option value="Femenino">Femenino</option>
@@ -543,9 +574,10 @@ function AddPatientModal({
                 <option value="Otro">Otro</option>
               </select>
             </Field>
-            <Field label="Fecha de nacimiento">
+            <Field label="Fecha de nacimiento *">
               <input
                 type="date"
+                max={new Date().toISOString().slice(0, 10)}
                 value={paciente.fechaNacimiento ?? ""}
                 onChange={(event) =>
                   setPaciente((row) => ({
@@ -585,18 +617,10 @@ function AddPatientModal({
             <Field label="Motivo de consulta *">
               <textarea value={motivo} onChange={(event) => setMotivo(event.target.value)} className={`${inputClass} min-h-24 resize-y`} />
             </Field>
-            <Field label="Nivel de triaje">
-              <select value={prioridadTriaje} onChange={(event) => setPrioridadTriaje(event.target.value as PrioridadTriaje)} className={selectClass}>
-                <option value="rojo">Rojo - emergencia</option>
-                <option value="naranja">Naranja - muy urgente</option>
-                <option value="amarillo">Amarillo - urgente</option>
-                <option value="verde">Verde - menor urgencia</option>
-                <option value="azul">Azul - no urgente</option>
-              </select>
-              <span className="mt-2 block">
-                <TriageBadge value={prioridadTriaje} />
-              </span>
-            </Field>
+            <div className="space-y-1.5 text-[13px] font-semibold text-[#34495C]">
+              <span>Nivel de triaje</span>
+              <TriageSelect value={prioridadTriaje} onChange={setPrioridadTriaje} />
+            </div>
             <Field label="Servicio de destino">
               <select value={servicioDestino} onChange={(event) => setServicioDestino(event.target.value as ServicioDestino)} className={selectClass}>
                 <option value="medicina">Medicina</option>
@@ -702,6 +726,10 @@ function HistoriaClinicaModal({
     if (!paciente.nombres?.trim()) nextErrors.nombres = "Los nombres son obligatorios.";
     if (!paciente.apellidos?.trim()) nextErrors.apellidos = "Los apellidos son obligatorios.";
     if (!paciente.sexo?.trim()) nextErrors.sexo = "Seleccione sexo o género.";
+    if (!paciente.fechaNacimiento?.trim()) nextErrors.fechaNacimiento = "La fecha de nacimiento es obligatoria.";
+    else if (paciente.fechaNacimiento > new Date().toISOString().slice(0, 10)) {
+      nextErrors.fechaNacimiento = "La fecha de nacimiento no puede ser una fecha futura.";
+    }
     if (!paciente.tipoUsuario?.trim()) nextErrors.tipoUsuario = "Seleccione el tipo de usuario.";
     if (!paciente.cedula?.trim()) nextErrors.historiaClinicaNumero = "La historia clínica se asigna con la cédula.";
 
@@ -719,7 +747,10 @@ function HistoriaClinicaModal({
       if (!(paciente.dependencia || paciente.facultadNombre)?.trim()) nextErrors.dependencia = "Registre dependencia o facultad.";
       if (!paciente.cargo?.trim()) nextErrors.cargo = "Registre cargo o área.";
     }
-    if (paciente.tipoUsuario === "administrativo" && !paciente.dependencia?.trim()) {
+    if (
+      (paciente.tipoUsuario === "administrativo" || paciente.tipoUsuario === "trabajador") &&
+      !paciente.dependencia?.trim()
+    ) {
       nextErrors.dependencia = "Registre dependencia o unidad administrativa.";
     }
     setErrors(nextErrors);
@@ -917,17 +948,6 @@ function HistoriaClinicaModal({
   );
 }
 
-const tipoUsuarioOptions: AutocompleteOption[] = [
-  { value: "estudiante", label: "Estudiante" },
-  { value: "docente", label: "Docente" },
-  { value: "administrativo", label: "Administrativo" },
-];
-
-const nivelAcademicoOptions: AutocompleteOption[] = [
-  { value: "pregrado", label: "Pregrado" },
-  { value: "posgrado", label: "Posgrado" },
-];
-
 const sexoOptions: AutocompleteOption[] = [
   { value: "Femenino", label: "Femenino" },
   { value: "Masculino", label: "Masculino" },
@@ -950,11 +970,6 @@ const etniaOptions: AutocompleteOption[] = [
   { value: "Blanco/a", label: "Blanco/a" },
   { value: "Otro", label: "Otro" },
 ];
-
-const dependenciaOptions: AutocompleteOption[] = facultades.map((facultad) => ({
-  value: facultad.nombre,
-  label: facultad.nombre,
-}));
 
 const familiarOptions: AutocompleteOption[] = [
   "Padre",
@@ -996,24 +1011,6 @@ function DatosPersonalesStep({
   onChange: (changes: Partial<Paciente>) => void;
   onBirthDate: (value: string) => void;
 }) {
-  const tipoUsuario = paciente.tipoUsuario ?? "estudiante";
-  const nivelAcademico = paciente.nivelAcademico ?? "pregrado";
-  const facultadOptions = facultades.map((facultad) => ({ value: facultad.id, label: facultad.nombre }));
-  const facultad = facultades.find((item) => item.id === paciente.facultadId);
-  const carreraOptions = (facultad?.carreras ?? []).map((carrera) => ({
-    value: carrera.id,
-    label: carrera.nombre,
-  }));
-  const posgradoOptions = (facultad?.posgrados ?? []).map((programa) => ({
-    value: programa.id,
-    label: programa.nombre,
-  }));
-  const periodoOptions = periodosAcademicos.map((periodo) => ({
-    value: periodo.id,
-    label: periodo.nombre,
-  }));
-  const cicloOptions = ciclos.map((ciclo) => ({ value: ciclo, label: ciclo }));
-
   return (
     <div className="mt-5 grid gap-x-[18px] gap-y-4 md:grid-cols-2 xl:grid-cols-3">
       <Field label="Cédula">
@@ -1043,109 +1040,20 @@ function DatosPersonalesStep({
         <ErrorText value={errors.sexo} />
       </Field>
       <Field label="Fecha de nacimiento">
-        <input type="date" value={paciente.fechaNacimiento ?? ""} onChange={(event) => onBirthDate(event.target.value)} className={inputClass} />
+        <input
+          type="date"
+          max={new Date().toISOString().slice(0, 10)}
+          value={paciente.fechaNacimiento ?? ""}
+          onChange={(event) => onBirthDate(event.target.value)}
+          className={inputClass}
+        />
+        <ErrorText value={errors.fechaNacimiento} />
       </Field>
       <Field label="Edad">
         <input value={paciente.edad ?? ""} readOnly className={`${inputClass} bg-[#F8FBFD]`} />
       </Field>
-      <Field label="Tipo de usuario">
-        <AutocompleteField
-          value={tipoUsuario}
-          options={tipoUsuarioOptions}
-          onChange={(value) =>
-            onChange({
-              tipoUsuario: value as TipoUsuario,
-              nivelAcademico: value === "estudiante" ? paciente.nivelAcademico ?? "pregrado" : undefined,
-              carreraId: value === "estudiante" ? paciente.carreraId : "",
-              carreraNombre: value === "estudiante" ? paciente.carreraNombre : "",
-              ciclo: value === "estudiante" ? paciente.ciclo : "",
-              periodoAcademicoId: value === "estudiante" ? paciente.periodoAcademicoId : "",
-              periodoAcademicoNombre: value === "estudiante" ? paciente.periodoAcademicoNombre : "",
-            })
-          }
-        />
-        <ErrorText value={errors.tipoUsuario} />
-      </Field>
-      {tipoUsuario === "estudiante" && (
-        <>
-          <Field label="Nivel académico">
-            <AutocompleteField value={nivelAcademico} options={nivelAcademicoOptions} onChange={(value) => onChange({ nivelAcademico: value as Paciente["nivelAcademico"] })} />
-          </Field>
-          <Field label="Facultad">
-            <AutocompleteField
-              value={paciente.facultadNombre ?? ""}
-              options={facultadOptions}
-              onChange={(value, option) =>
-                onChange({
-                  facultadId: option?.value ?? "",
-                  facultadNombre: option?.label ?? value,
-                  carreraId: "",
-                  carreraNombre: "",
-                  programaPosgradoId: "",
-                  programaPosgradoNombre: "",
-                })
-              }
-            />
-            <ErrorText value={errors.facultad} />
-          </Field>
-          {nivelAcademico === "posgrado" ? (
-            <Field label="Programa posgrado">
-              <AutocompleteField
-                value={paciente.programaPosgradoNombre ?? ""}
-                options={posgradoOptions}
-                onChange={(value, option) => onChange({ programaPosgradoId: option?.value ?? "", programaPosgradoNombre: option?.label ?? value })}
-              />
-              <ErrorText value={errors.carrera} />
-            </Field>
-          ) : (
-            <>
-              <Field label="Carrera">
-                <AutocompleteField
-                  value={paciente.carreraNombre ?? ""}
-                  options={carreraOptions}
-                  onChange={(value, option) => onChange({ carreraId: option?.value ?? "", carreraNombre: option?.label ?? value })}
-                />
-                <ErrorText value={errors.carrera} />
-              </Field>
-              <Field label="Ciclo">
-                <AutocompleteField value={paciente.ciclo ?? ""} options={cicloOptions} onChange={(value) => onChange({ ciclo: value })} />
-                <ErrorText value={errors.ciclo} />
-              </Field>
-            </>
-          )}
-          <Field label="Periodo académico">
-            <AutocompleteField
-              value={paciente.periodoAcademicoNombre ?? ""}
-              options={periodoOptions}
-              onChange={(value, option) => onChange({ periodoAcademicoId: option?.value ?? "", periodoAcademicoNombre: option?.label ?? value })}
-            />
-            <ErrorText value={errors.periodo} />
-          </Field>
-        </>
-      )}
-      {tipoUsuario === "docente" && (
-        <>
-          <Field label="Dependencia / facultad">
-            <AutocompleteField value={paciente.dependencia || paciente.facultadNombre || ""} options={dependenciaOptions} onChange={(value) => onChange({ dependencia: value, facultadNombre: value })} />
-            <ErrorText value={errors.dependencia} />
-          </Field>
-          <Field label="Cargo o área">
-            <input value={paciente.cargo ?? ""} onChange={(event) => onChange({ cargo: event.target.value })} className={inputClass} />
-            <ErrorText value={errors.cargo} />
-          </Field>
-        </>
-      )}
-      {tipoUsuario === "administrativo" && (
-        <>
-          <Field label="Dependencia / unidad administrativa">
-            <AutocompleteField value={paciente.dependencia ?? ""} options={dependenciaOptions} onChange={(value) => onChange({ dependencia: value })} />
-            <ErrorText value={errors.dependencia} />
-          </Field>
-          <Field label="Cargo">
-            <input value={paciente.cargo ?? ""} onChange={(event) => onChange({ cargo: event.target.value })} className={inputClass} />
-          </Field>
-        </>
-      )}
+      <DynamicAcademicFields values={paciente} onChange={onChange} />
+      <ErrorText value={errors.tipoUsuario || errors.facultad || errors.carrera || errors.ciclo || errors.periodo || errors.dependencia || errors.cargo} />
       <Field label="Teléfono personal">
         <input value={paciente.telefono ?? ""} onChange={(event) => onChange({ telefono: event.target.value })} className={inputClass} />
       </Field>

@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 
+import { CatalogAdmin } from "@/components/admin/CatalogAdmin";
 import { MedicineQueue } from "@/components/clinical/MedicineQueue";
 import { TriageFlow } from "@/components/clinical/TriageFlow";
 import { AppShell } from "@/components/layout/AppShell";
@@ -74,9 +75,9 @@ const serviceSubtitles: Record<Role, string> = {
 
 export function ServiceDashboard({ role }: ServiceDashboardProps) {
   const routeConfig = roleRoutes[role];
-  const [activeView, setActiveView] = useState<"dashboard" | "medicina-pendientes" | "triaje">(
-    "dashboard",
-  );
+  const [activeView, setActiveView] = useState<
+    "dashboard" | "medicina-pendientes" | "triaje" | "catalogos"
+  >("dashboard");
 
   if (role === "medicina" && activeView === "medicina-pendientes") {
     return (
@@ -94,6 +95,14 @@ export function ServiceDashboard({ role }: ServiceDashboardProps) {
     );
   }
 
+  if (role === "admin" && activeView === "catalogos") {
+    return (
+      <AppShell role={role}>
+        <CatalogAdmin onBack={() => setActiveView("dashboard")} />
+      </AppShell>
+    );
+  }
+
   function openDashboardItem(label: string) {
     if (role === "medicina" && label === "Atenciones pendientes") {
       setActiveView("medicina-pendientes");
@@ -101,6 +110,10 @@ export function ServiceDashboard({ role }: ServiceDashboardProps) {
     }
     if (role === "enfermeria" && label === "Triaje") {
       setActiveView("triaje");
+      return;
+    }
+    if (role === "admin" && label === "Catálogos") {
+      setActiveView("catalogos");
     }
   }
 
@@ -142,7 +155,8 @@ export function ServiceDashboard({ role }: ServiceDashboardProps) {
           {routeConfig.navItems.map((item, index) => {
             const isFunctional =
               (role === "medicina" && item.label === "Atenciones pendientes") ||
-              (role === "enfermeria" && item.label === "Triaje");
+              (role === "enfermeria" && item.label === "Triaje") ||
+              (role === "admin" && item.label === "Catálogos");
             const cardContent = (
               <>
                 <div className="h-0.5 bg-[linear-gradient(90deg,#D71920_0%,#D71920_30%,#005B84_30%,#E5EEF4_30%,#E5EEF4_100%)]" />

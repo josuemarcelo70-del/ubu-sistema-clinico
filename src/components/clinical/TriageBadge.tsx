@@ -1,4 +1,5 @@
 import type { PrioridadTriaje } from "@/types/clinical";
+import { triageOptions } from "@/lib/triage-catalog";
 
 type TriageBadgeProps = {
   value: PrioridadTriaje;
@@ -19,5 +20,36 @@ export function TriageBadge({ value }: TriageBadgeProps) {
     >
       {value}
     </span>
+  );
+}
+
+export function TriageSelect({
+  value,
+  onChange,
+}: {
+  value: PrioridadTriaje;
+  onChange: (value: PrioridadTriaje) => void;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {triageOptions.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`flex flex-col items-start gap-1 rounded-md border px-3 py-2 text-left transition ${
+            value === option.value ? "border-[#082F49] bg-[#F8FBFD] shadow-sm" : "border-[#D7E3EC] bg-white"
+          }`}
+        >
+          <span className="flex items-center gap-2 text-sm font-black" style={{ color: option.color }}>
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: option.color }} />
+            {option.value.toUpperCase()} · {option.label}
+          </span>
+          <span className="text-xs font-semibold text-[#64748B]">
+            Tiempo de espera: {option.tiempoEsperaLabel}
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }
