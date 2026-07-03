@@ -48,7 +48,7 @@ export function BrandLogo({
       </div>
       {!compact && (
         <div className="min-w-0">
-          <p className={`text-sm font-bold uppercase tracking-wide ${primaryText}`}>
+          <p className={`text-sm font-bold uppercase ${primaryText}`}>
             UNIVERSIDAD NACIONAL DE LOJA
           </p>
           <p className={`text-xs font-medium ${secondaryText}`}>

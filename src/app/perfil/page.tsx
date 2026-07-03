@@ -71,7 +71,7 @@ function TextField({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange?.(event.target.value)}
-        className="mt-2 w-full rounded-md border border-[#D9E5EC] bg-[#F8FBFD] px-3.5 py-2.5 text-sm font-medium text-[#082F49] outline-none transition placeholder:text-[#94A3B8] focus:border-[#005B84] focus:bg-white focus:ring-2 focus:ring-[#005B84]/15 disabled:cursor-not-allowed disabled:bg-[#EEF4F8] disabled:text-[#64748B]"
+        className="mt-1.5 w-full rounded-md border border-[#D7E3EC] bg-[#F8FBFD] px-3 py-2.5 text-sm font-medium text-[#082F49] outline-none transition focus:border-[#005B84] focus:bg-white focus:ring-2 focus:ring-[#005B84]/15 disabled:cursor-not-allowed disabled:bg-[#EEF6FA] disabled:text-[#64748B]"
       />
     </label>
   );
@@ -85,11 +85,11 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-[#D9E5EC] bg-white shadow-sm">
-      <div className="border-b border-[#D9E5EC] px-5 py-4">
+    <section className="rounded-lg border border-[#D7E3EC] bg-white shadow-sm">
+      <div className="border-b border-[#D7E3EC] px-4 py-3">
         <h2 className="text-base font-bold text-[#082F49]">{title}</h2>
       </div>
-      <div className="grid gap-4 p-5 md:grid-cols-2">{children}</div>
+      <div className="grid gap-4 p-4 md:grid-cols-2">{children}</div>
     </section>
   );
 }
@@ -107,7 +107,7 @@ function SwitchField({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-[#D9E5EC] bg-[#F8FBFD] px-3.5 py-2.5 text-left text-sm font-semibold text-[#082F49] transition hover:border-[#BFD2DE] focus:outline-none focus:ring-2 focus:ring-[#005B84]/20"
+      className="flex min-h-11 items-center justify-between gap-4 rounded-md border border-[#D7E3EC] bg-[#F8FBFD] px-3 py-2 text-left text-sm font-semibold text-[#082F49] transition hover:border-[#BFD2DE] focus:outline-none focus:ring-2 focus:ring-[#005B84]/20"
       aria-pressed={checked}
     >
       <span>{label}</span>
@@ -260,30 +260,47 @@ export default function ProfilePage() {
     <AppShell serviceName="Perfil institucional">
       <form
         onSubmit={handleSave}
-        className="dashboard-fade mx-auto max-w-7xl space-y-5"
+        className="dashboard-fade mx-auto max-w-7xl space-y-4"
       >
-        <div className="rounded-lg border border-[#D9E5EC] bg-white px-5 py-5 shadow-sm sm:px-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="overflow-hidden rounded-lg border border-[#D7E3EC] bg-white shadow-sm">
+          <div className="h-1 bg-[linear-gradient(90deg,#D71920_0%,#D71920_18%,#005B84_18%,#062B49_100%)]" />
+          <div className="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#005B84]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#005B84]">
                 Perfil institucional
               </p>
-              <h1 className="mt-2 text-2xl font-bold leading-tight text-[#082F49]">
+              <h1 className="mt-1.5 text-xl font-bold leading-tight text-[#082F49]">
                 Perfil del usuario
               </h1>
-              <p className="mt-2 text-sm font-medium text-[#64748B]">
+              <p className="mt-1.5 text-sm font-medium text-[#64748B]">
                 {profile.professional.servicioDependencia}
               </p>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="rounded-lg border border-[#D7E3EC] bg-[#EEF6FA] p-3 lg:w-80">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#062B49] text-xs font-bold text-white">
+                  {profile.documentSettings.inicialesInforme ||
+                    `${profile.nombres[0] ?? ""}${profile.apellidos[0] ?? ""}`.toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-[#082F49]">
+                    {`${profile.nombres} ${profile.apellidos}`.trim()}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs font-semibold text-[#64748B]">
+                    {profile.professional.cargoInstitucional}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:col-span-2 lg:justify-end">
               {savedMessage && (
-                <span className="rounded-md bg-[#ECFDF3] px-3 py-2 text-sm font-semibold text-[#15803D]">
+                <span className="rounded-md bg-[#ECFDF3] px-3 py-1.5 text-sm font-semibold text-[#15803D]">
                   {savedMessage}
                 </span>
               )}
               <button
                 type="submit"
-                className="rounded-md bg-[#0B2E59] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#005B84] focus:outline-none focus:ring-2 focus:ring-[#005B84]/30"
+                className="rounded-md bg-[#062B49] px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[#005B84] focus:outline-none focus:ring-2 focus:ring-[#005B84]/30"
               >
                 Guardar cambios
               </button>
@@ -369,7 +386,7 @@ export default function ProfilePage() {
           />
         </Section>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
           <Section title="Datos para documentos institucionales">
             <TextField
               label="Iniciales para códigos de informe"
@@ -387,25 +404,25 @@ export default function ProfilePage() {
             />
             <TextField
               label="Firma digitalizada"
-              value="Carga pendiente"
+              value="Sin archivo cargado"
               disabled
             />
             <TextField
               label="Sello profesional"
-              value="Carga pendiente"
+              value="Sin archivo cargado"
               disabled
             />
           </Section>
 
-          <section className="rounded-lg border border-[#D9E5EC] bg-white shadow-sm">
-            <div className="border-b border-[#D9E5EC] px-5 py-4">
+          <section className="rounded-lg border border-[#D7E3EC] bg-white shadow-sm">
+            <div className="border-b border-[#D7E3EC] px-4 py-3">
               <h2 className="text-base font-bold text-[#082F49]">
                 Pie de firma automático
               </h2>
             </div>
-            <div className="p-5">
-              <div className="min-h-52 rounded-md border border-dashed border-[#BFD2DE] bg-[#F8FBFD] p-4">
-                <div className="mb-5 h-12 w-40 border-b border-[#94A3B8]" />
+            <div className="p-4">
+              <div className="min-h-44 rounded-md border border-dashed border-[#BFD2DE] bg-[#F8FBFD] p-4">
+                <div className="mb-4 h-10 w-36 border-b border-[#94A3B8]" />
                 <div className="space-y-1 text-sm font-medium text-[#082F49]">
                   {signatureLines.map((line) => (
                     <p key={line}>{line}</p>
@@ -416,13 +433,13 @@ export default function ProfilePage() {
           </section>
         </section>
 
-        <section className="rounded-lg border border-[#D9E5EC] bg-white shadow-sm">
-          <div className="border-b border-[#D9E5EC] px-5 py-4">
+        <section className="rounded-lg border border-[#D7E3EC] bg-white shadow-sm">
+          <div className="border-b border-[#D7E3EC] px-4 py-3">
             <h2 className="text-base font-bold text-[#082F49]">
               Configuración documental
             </h2>
           </div>
-          <div className="grid gap-3 p-5 md:grid-cols-2">
+          <div className="grid gap-3 p-4 md:grid-cols-2">
             <SwitchField
               label="Responsable de informes mensuales"
               checked={profile.documentSettings.responsableInformesMensuales}

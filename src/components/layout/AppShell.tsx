@@ -22,6 +22,7 @@ export function AppShell({ role, serviceName, children }: AppShellProps) {
   const router = useRouter();
   const [session, setSession] = useState<SimulatedSession | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   useEffect(() => {
     function loadSession() {
@@ -83,19 +84,35 @@ export function AppShell({ role, serviceName, children }: AppShellProps) {
   const routeConfig = roleRoutes[session.activeRole];
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#F4F8FB] text-[#082F49]">
-      <Header serviceName={serviceName ?? routeConfig.label} session={session} />
-      <div className="flex flex-col lg:min-h-[calc(100vh-81px)] lg:flex-row">
+    <div className="min-h-dvh overflow-x-hidden bg-[#F5F8FB] text-[#082F49]">
+      <div className="flex min-h-dvh">
+        {isSidebarOpen && (
+          <button
+            type="button"
+            aria-label="Cerrar menú"
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 z-40 bg-[#062B49]/45 backdrop-blur-[1px] lg:hidden"
+          />
+        )}
         <Sidebar
           activeRole={session.activeRole}
           availableRoles={session.roles}
           serviceName={routeConfig.label}
           navItems={routeConfig.navItems}
           onLogout={handleLogout}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
         />
-        <main className="flex-1 bg-[#F4F8FB] px-4 py-7 sm:px-6 lg:px-8">
-          {children}
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header
+            serviceName={serviceName ?? routeConfig.label}
+            session={session}
+            onMenuClick={() => setIsSidebarOpen(true)}
+          />
+          <main className="min-w-0 flex-1 bg-[#F5F8FB] px-4 py-4 sm:px-6 lg:px-6 lg:py-6">
+            {children}
+          </main>
+        </div>
       </div>
     </div>
   );
