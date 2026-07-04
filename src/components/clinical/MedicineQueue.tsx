@@ -23,11 +23,22 @@ import {
   obtenerSignosPorId,
 } from "@/lib/clinical-storage";
 import { cie10Catalog } from "@/lib/cie10-catalog";
+import {
+  calcularEdadGestacional,
+  compactarRegistro,
+  emptyGineco,
+  esSexoFemenino,
+  orientacionSexualOptions,
+  puebloNacionalidadOptions,
+  tieneDatosGineco,
+  tipoDiscapacidadOptions,
+} from "@/lib/gineco";
 import { SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
 import type {
   Atencion,
   AntecedenteFamiliar,
   AntecedentePatologico,
+  AntecedentesGinecoObstetricos,
   Cie10Diagnostico,
   Derivacion,
   HabitosPersonales,
@@ -39,6 +50,7 @@ import type {
 import { Modal } from "@/components/ui/Modal";
 import { AutocompleteField, type AutocompleteOption } from "./AutocompleteField";
 import { DynamicAcademicFields, Field, inputClass, selectClass } from "./ClinicalFormFields";
+import { GinecoObstetricosStep } from "./GinecoObstetricos";
 import { MedicalAttention } from "./MedicalAttention";
 import { TriageBadge, TriageSelect } from "./TriageBadge";
 
@@ -659,9 +671,12 @@ function HistoriaClinicaModal({
     historiaClinicaNumero: initialHc,
     numeroHistoriaClinica: initialHc,
   });
-  const [step, setStep] = useState<"datos" | "habitos" | "antecedentes">("datos");
+  const [step, setStep] = useState<"datos" | "habitos" | "antecedentes" | "gineco">("datos");
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [gineco, setGineco] = useState<AntecedentesGinecoObstetricos>({ ...emptyGineco });
+  // Para sexo "Otro" el profesional puede habilitar manualmente la pestaña gineco-obstétrica.
+  const [ginecoManual, setGinecoManual] = useState(false);
   const [habitos, setHabitos] = useState<HabitosPersonales>({
     miccion: "",
     deposiciones: "",
@@ -687,7 +702,24 @@ function HistoriaClinicaModal({
   const [antecedentesQuirurgicos, setAntecedentesQuirurgicos] = useState(row.paciente?.antecedentesQuirurgicos ?? "");
   const [alergias, setAlergias] = useState(row.paciente?.alergias ?? "");
 
+  function ginecoDisponible(sexo?: string, manual = ginecoManual) {
+    return esSexoFemenino(sexo) || ((sexo ?? "").trim() === "Otro" && manual);
+  }
+
+  const ginecoVisible = ginecoDisponible(paciente.sexo);
+
   function changePaciente(changes: Partial<Paciente>) {
+    if (changes.sexo !== undefined && changes.sexo !== paciente.sexo) {
+      const eraVisible = ginecoDisponible(paciente.sexo);
+      const seraVisible = ginecoDisponible(changes.sexo);
+      if (eraVisible && !seraVisible && tieneDatosGineco(gineco)) {
+        const conservar = window.confirm(
+          "Al cambiar el sexo, los antecedentes gineco-obstétricos dejarán de mostrarse. ¿Desea conservar los datos registrados en la historia clínica?",
+        );
+        if (!conservar) setGineco({ ...emptyGineco });
+      }
+      if (!seraVisible && step === "gineco") setStep("datos");
+    }
     setPaciente((data) => {
       const nextCedula =
         changes.cedula !== undefined ? changes.cedula.trim() : data.cedula?.trim() ?? "";
@@ -753,9 +785,32 @@ function HistoriaClinicaModal({
     ) {
       nextErrors.dependencia = "Registre dependencia o unidad administrativa.";
     }
+    if (paciente.discapacidad === "Sí") {
+      if (!paciente.tipoDiscapacidad?.trim()) {
+        nextErrors.tipoDiscapacidad = "Si registra discapacidad, el tipo es obligatorio.";
+      }
+      const porcentaje = Number(paciente.porcentajeDiscapacidad);
+      if (
+        paciente.porcentajeDiscapacidad?.trim() &&
+        (!Number.isFinite(porcentaje) || porcentaje < 1 || porcentaje > 100)
+      ) {
+        nextErrors.porcentajeDiscapacidad = "El porcentaje debe estar entre 1 y 100.";
+      }
+    }
+    if (gineco.gestaActual === "Sí") {
+      if (!gineco.fumGestacion?.trim()) {
+        nextErrors.ginecoFum = "Si la gesta actual es Sí, la FUM es obligatoria.";
+      } else {
+        const calculo = calcularEdadGestacional(gineco.fumGestacion);
+        if (!calculo.valido) nextErrors.ginecoFum = calculo.error ?? "La FUM no es válida.";
+      }
+    }
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) setStep("datos");
-    return Object.keys(nextErrors).length === 0;
+    const keys = Object.keys(nextErrors);
+    if (keys.length > 0) {
+      setStep(keys.every((key) => key === "ginecoFum") ? "gineco" : "datos");
+    }
+    return keys.length === 0;
   }
 
   function save() {
@@ -805,6 +860,10 @@ function HistoriaClinicaModal({
         antecedentesFamiliaresObservacion: familyObservacion,
         antecedentesQuirurgicos,
         alergias: alergias.trim() || "No refiere",
+        // Se conservan aunque la pestaña esté oculta, para evitar pérdida accidental.
+        antecedentesGinecoObstetricos: tieneDatosGineco(gineco)
+          ? compactarRegistro(gineco)
+          : undefined,
       },
     });
     setDirty(false);
@@ -877,6 +936,7 @@ function HistoriaClinicaModal({
           ["datos", "Datos personales"],
           ["habitos", "Hábitos personales"],
           ["antecedentes", "Antecedentes personales"],
+          ...(ginecoVisible ? [["gineco", "Antecedentes gineco-obstétricos"]] : []),
         ].map(([key, label]) => (
           <button
             key={key}
@@ -892,7 +952,23 @@ function HistoriaClinicaModal({
       </div>
 
       {step === "datos" && (
-        <DatosPersonalesStep paciente={paciente} errors={errors} onChange={changePaciente} onBirthDate={setBirthDate} />
+        <DatosPersonalesStep
+          paciente={paciente}
+          errors={errors}
+          onChange={changePaciente}
+          onBirthDate={setBirthDate}
+          ginecoManual={ginecoManual}
+          onGinecoManual={(value) => {
+            if (!value && tieneDatosGineco(gineco)) {
+              const conservar = window.confirm(
+                "Al deshabilitar la sección, los antecedentes gineco-obstétricos dejarán de mostrarse. ¿Desea conservar los datos registrados en la historia clínica?",
+              );
+              if (!conservar) setGineco({ ...emptyGineco });
+            }
+            setGinecoManual(value);
+            setDirty(true);
+          }}
+        />
       )}
       {step === "habitos" && (
         <HabitosStep
@@ -939,6 +1015,16 @@ function HistoriaClinicaModal({
           }}
           onAlergias={(value) => {
             setAlergias(value);
+            setDirty(true);
+          }}
+        />
+      )}
+      {step === "gineco" && ginecoVisible && (
+        <GinecoObstetricosStep
+          value={gineco}
+          errorFum={errors.ginecoFum}
+          onChange={(next) => {
+            setGineco(next);
             setDirty(true);
           }}
         />
@@ -1005,11 +1091,15 @@ function DatosPersonalesStep({
   errors,
   onChange,
   onBirthDate,
+  ginecoManual,
+  onGinecoManual,
 }: {
   paciente: Partial<Paciente>;
   errors: Record<string, string>;
   onChange: (changes: Partial<Paciente>) => void;
   onBirthDate: (value: string) => void;
+  ginecoManual: boolean;
+  onGinecoManual: (value: boolean) => void;
 }) {
   return (
     <div className="mt-5 grid gap-x-[18px] gap-y-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1035,9 +1125,43 @@ function DatosPersonalesStep({
       <Field label="Etnia">
         <AutocompleteField value={paciente.etnia ?? ""} options={etniaOptions} onChange={(value) => onChange({ etnia: value })} />
       </Field>
+      <Field label="Pueblo o nacionalidad">
+        <select
+          value={paciente.puebloNacionalidad ?? ""}
+          onChange={(event) => onChange({ puebloNacionalidad: event.target.value })}
+          className={selectClass}
+        >
+          <option value="">Seleccione...</option>
+          {puebloNacionalidadOptions.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Orientación sexual">
+        <select
+          value={paciente.orientacionSexual ?? ""}
+          onChange={(event) => onChange({ orientacionSexual: event.target.value })}
+          className={selectClass}
+        >
+          <option value="">Seleccione...</option>
+          {orientacionSexualOptions.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      </Field>
       <Field label="Género / Sexo">
         <AutocompleteField value={paciente.sexo ?? ""} options={sexoOptions} onChange={(value) => onChange({ sexo: value })} />
         <ErrorText value={errors.sexo} />
+        {(paciente.sexo ?? "").trim() === "Otro" && (
+          <span className="mt-1 flex items-center gap-2 text-xs font-semibold normal-case text-[#34495C]">
+            <input
+              type="checkbox"
+              checked={ginecoManual}
+              onChange={(event) => onGinecoManual(event.target.checked)}
+            />
+            Habilitar antecedentes gineco-obstétricos
+          </span>
+        )}
       </Field>
       <Field label="Fecha de nacimiento">
         <input
@@ -1052,6 +1176,73 @@ function DatosPersonalesStep({
       <Field label="Edad">
         <input value={paciente.edad ?? ""} readOnly className={`${inputClass} bg-[#F8FBFD]`} />
       </Field>
+      <Field label="Discapacidad">
+        <select
+          value={paciente.discapacidad ?? ""}
+          onChange={(event) => {
+            const next = event.target.value as "" | "No" | "Sí";
+            if (next === "Sí") {
+              onChange({ discapacidad: "Sí" });
+              return;
+            }
+            // Al quitar la discapacidad se limpian los campos dependientes.
+            onChange({
+              discapacidad: next || undefined,
+              tipoDiscapacidad: "",
+              porcentajeDiscapacidad: "",
+              carnetDiscapacidad: "",
+              observacionDiscapacidad: "",
+            });
+          }}
+          className={selectClass}
+        >
+          <option value="">Seleccione...</option>
+          <option value="No">No</option>
+          <option value="Sí">Sí</option>
+        </select>
+      </Field>
+      {paciente.discapacidad === "Sí" && (
+        <>
+          <Field label="Tipo de discapacidad *">
+            <select
+              value={paciente.tipoDiscapacidad ?? ""}
+              onChange={(event) => onChange({ tipoDiscapacidad: event.target.value })}
+              className={selectClass}
+            >
+              <option value="">Seleccione...</option>
+              {tipoDiscapacidadOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+            <ErrorText value={errors.tipoDiscapacidad} />
+          </Field>
+          <Field label="Porcentaje de discapacidad">
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={paciente.porcentajeDiscapacidad ?? ""}
+              onChange={(event) => onChange({ porcentajeDiscapacidad: event.target.value })}
+              className={inputClass}
+            />
+            <ErrorText value={errors.porcentajeDiscapacidad} />
+          </Field>
+          <Field label="Carnet CONADIS/MSP (opcional)">
+            <input
+              value={paciente.carnetDiscapacidad ?? ""}
+              onChange={(event) => onChange({ carnetDiscapacidad: event.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Observación de discapacidad (opcional)">
+            <input
+              value={paciente.observacionDiscapacidad ?? ""}
+              onChange={(event) => onChange({ observacionDiscapacidad: event.target.value })}
+              className={inputClass}
+            />
+          </Field>
+        </>
+      )}
       <DynamicAcademicFields values={paciente} onChange={onChange} />
       <ErrorText value={errors.tipoUsuario || errors.facultad || errors.carrera || errors.ciclo || errors.periodo || errors.dependencia || errors.cargo} />
       <Field label="Teléfono personal">

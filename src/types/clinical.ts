@@ -89,6 +89,13 @@ export type Paciente = {
   antecedentesQuirurgicos?: string;
   estadoCivil?: string;
   etnia?: string;
+  orientacionSexual?: string;
+  puebloNacionalidad?: string;
+  discapacidad?: "No" | "Sí";
+  tipoDiscapacidad?: string;
+  porcentajeDiscapacidad?: string;
+  carnetDiscapacidad?: string;
+  observacionDiscapacidad?: string;
   grupoSanguineo?: string;
   contactoEmergenciaNombre?: string;
   contactoEmergenciaTelefono?: string;
@@ -125,6 +132,50 @@ export type HabitosPersonales = {
   actividadFisicaObservacion?: string;
 };
 
+export type GestacionActual = {
+  gestaActual: "" | "No" | "Sí" | "No sabe";
+  fumGestacion?: string;
+  edadGestacionalSemanas?: number;
+  edadGestacionalDias?: number;
+  fechaProbableParto?: string;
+  controlesPrenatales?: string;
+  riesgoObstetrico?: "" | "Bajo" | "Alto" | "No determinado";
+  observacionesGestacion?: string;
+};
+
+export type LactanciaActual = {
+  lactanciaActual: "" | "No" | "Sí";
+  tipoLactancia?: "" | "Exclusiva" | "Mixta" | "Complementaria";
+  edadLactante?: string;
+  observacionesLactancia?: string;
+};
+
+export type AntecedentesGinecoObstetricos = GestacionActual &
+  LactanciaActual & {
+    menarquia?: string;
+    fum?: string;
+    cicloMenstrual?: string;
+    duracionCiclo?: string;
+    duracionSangrado?: string;
+    dismenorrea?: string;
+    inicioVidaSexual?: string;
+    metodoAnticonceptivo?: string;
+    gestas?: string;
+    partos?: string;
+    cesareas?: string;
+    abortos?: string;
+    hijosVivos?: string;
+    antecedenteIts?: string;
+    ultimoPapanicolaou?: string;
+    ultimoControlGinecologico?: string;
+    observacionesGinecoObstetricas?: string;
+  };
+
+export type CondicionGinecoAtencion = GestacionActual &
+  LactanciaActual & {
+    observaciones?: string;
+  };
+
 export type HistoriaClinica = {
   id: string;
   pacienteId: string;
@@ -139,6 +190,7 @@ export type HistoriaClinica = {
   antecedentesFamiliaresObservacion?: string;
   antecedentesQuirurgicos: string;
   alergias: string;
+  antecedentesGinecoObstetricos?: AntecedentesGinecoObstetricos;
   estado: "activa";
 };
 
@@ -281,6 +333,7 @@ export type Atencion = {
   certificados?: CertificadoMedico[];
   procedimiento?: ProcedimientoAtencion;
   referenciaDerivacion?: ReferenciaDerivacion;
+  condicionGinecoObstetrica?: CondicionGinecoAtencion;
   coberturaAtencion?: CoberturaAtencion;
   createdAt?: string;
   updatedAt?: string;

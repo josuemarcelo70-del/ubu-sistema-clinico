@@ -12,10 +12,19 @@ import {
   obtenerHistoriaClinicaPorPaciente,
 } from "@/lib/clinical-storage";
 import { cie10Catalog } from "@/lib/cie10-catalog";
+import {
+  calcularEdadGestacional,
+  compactarRegistro,
+  emptyCondicionGineco,
+  esSexoFemenino,
+  formatearEdadGestacional,
+  tieneDatosGineco,
+} from "@/lib/gineco";
 import { mockUsers, SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
 import type {
   CertificadoMedico,
   CoberturaAtencion,
+  CondicionGinecoAtencion,
   Derivacion,
   DiagnosticoAtencion,
   EstudioLaboratorio,
@@ -31,6 +40,7 @@ import type {
 import { Modal } from "@/components/ui/Modal";
 import { AutocompleteField, type AutocompleteOption } from "./AutocompleteField";
 import { Field, inputClass, selectClass } from "./ClinicalFormFields";
+import { CondicionGinecoSection, gestacionConFum } from "./GinecoObstetricos";
 
 type MedicalAttentionProps = {
   derivacion: Derivacion;
@@ -803,6 +813,25 @@ export function MedicalAttention({
   const [coberturaAtencion, setCoberturaAtencion] = useState<CoberturaAtencion | undefined>(
     atencionBase?.coberturaAtencion ?? derivacion.coberturaAtencion ?? paciente?.coberturaAtencion,
   );
+  // El estado gineco-obstétrico se pregunta en cada atención: se precarga como
+  // referencia desde el borrador o la historia clínica, pero es editable.
+  const [ginecoAtencion, setGinecoAtencion] = useState<CondicionGinecoAtencion>(() => {
+    if (atencionBase?.condicionGinecoObstetrica) {
+      return { ...emptyCondicionGineco, ...atencionBase.condicionGinecoObstetrica };
+    }
+    const previo = historia?.antecedentesGinecoObstetricos;
+    if (!previo) return { ...emptyCondicionGineco };
+    const base: CondicionGinecoAtencion = {
+      ...emptyCondicionGineco,
+      gestaActual: previo.gestaActual ?? "",
+      fumGestacion: previo.fumGestacion ?? "",
+      lactanciaActual: previo.lactanciaActual ?? "",
+      tipoLactancia: previo.tipoLactancia ?? "",
+    };
+    // La edad gestacional se recalcula a la fecha de hoy, no a la de la apertura de HC.
+    return base.gestaActual === "Sí" ? gestacionConFum(base, base.fumGestacion ?? "") : base;
+  });
+  const ginecoSectionVisible = esSexoFemenino(paciente?.sexo) || tieneDatosGineco(ginecoAtencion);
   const [message, setMessage] = useState("");
   const [confirmFarmacia, setConfirmFarmacia] = useState(false);
   const [success, setSuccess] = useState<{ title: string; code: string }>();
@@ -1015,6 +1044,17 @@ export function MedicalAttention({
       setMessage("Agregue al menos un diagnóstico CIE-10.");
       return;
     }
+    if (ginecoAtencion.gestaActual === "Sí") {
+      if (!ginecoAtencion.fumGestacion?.trim()) {
+        setMessage("Si la gesta actual es Sí, registre la FUM en la condición gineco-obstétrica.");
+        return;
+      }
+      const calculoGestacion = calcularEdadGestacional(ginecoAtencion.fumGestacion);
+      if (!calculoGestacion.valido) {
+        setMessage(calculoGestacion.error ?? "La FUM de la gestación no es válida.");
+        return;
+      }
+    }
     const current = atencionBase ?? obtenerAtencionEnProcesoPorDerivacion(derivacion.id);
     if (!current) {
       setMessage("No se encontró la atención en proceso. Vuelva a abrir el paciente desde la cola.");
@@ -1053,6 +1093,9 @@ export function MedicalAttention({
           ...referencia,
           diagnostico: referencia.diagnostico || (diagnosticoPrincipal ? `${diagnosticoPrincipal.codigo} ${diagnosticoPrincipal.descripcion}` : ""),
         },
+        condicionGinecoObstetrica: tieneDatosGineco(ginecoAtencion)
+          ? compactarRegistro(ginecoAtencion)
+          : undefined,
         coberturaAtencion,
         updatedAt: now,
       });
@@ -1084,6 +1127,9 @@ export function MedicalAttention({
         certificados,
         procedimiento,
         referenciaDerivacion: referencia,
+        condicionGinecoObstetrica: tieneDatosGineco(ginecoAtencion)
+          ? compactarRegistro(ginecoAtencion)
+          : undefined,
         coberturaAtencion,
       });
     } catch {
@@ -1117,6 +1163,7 @@ export function MedicalAttention({
                 ["Paciente", "attn-paciente"],
                 ["Signos vitales", "attn-vitales"],
                 ["Antecedentes", "attn-antecedentes"],
+                ...(ginecoSectionVisible ? [["Gineco-obstétrico", "attn-gineco"]] : []),
                 ["Consulta", "attn-consulta"],
                 ["CIE-10", "attn-cie10"],
                 ["Tratamiento", "attn-tratamiento"],
@@ -1214,6 +1261,44 @@ export function MedicalAttention({
                 />
                 <MiniInfo label="Antecedentes quirúrgicos" value={historia.antecedentesQuirurgicos} />
                 <MiniInfo label="Alergias" value={historia.alergias} />
+                {historia.antecedentesGinecoObstetricos && (
+                  <>
+                    <MiniInfo
+                      label="Gineco-obstétricos (HC)"
+                      value={[
+                        historia.antecedentesGinecoObstetricos.menarquia
+                          ? `Menarquia: ${historia.antecedentesGinecoObstetricos.menarquia}`
+                          : "",
+                        historia.antecedentesGinecoObstetricos.cicloMenstrual
+                          ? `Ciclo: ${historia.antecedentesGinecoObstetricos.cicloMenstrual}`
+                          : "",
+                        `G${historia.antecedentesGinecoObstetricos.gestas ?? 0} P${historia.antecedentesGinecoObstetricos.partos ?? 0} C${historia.antecedentesGinecoObstetricos.cesareas ?? 0} A${historia.antecedentesGinecoObstetricos.abortos ?? 0}`,
+                        historia.antecedentesGinecoObstetricos.metodoAnticonceptivo
+                          ? `Anticoncepción: ${historia.antecedentesGinecoObstetricos.metodoAnticonceptivo}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join("; ")}
+                    />
+                    <MiniInfo
+                      label="Gestación / lactancia (HC)"
+                      value={[
+                        historia.antecedentesGinecoObstetricos.gestaActual
+                          ? `Gesta: ${historia.antecedentesGinecoObstetricos.gestaActual}`
+                          : "",
+                        formatearEdadGestacional(
+                          historia.antecedentesGinecoObstetricos.edadGestacionalSemanas,
+                          historia.antecedentesGinecoObstetricos.edadGestacionalDias,
+                        ),
+                        historia.antecedentesGinecoObstetricos.lactanciaActual
+                          ? `Lactancia: ${historia.antecedentesGinecoObstetricos.lactanciaActual}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join("; ")}
+                    />
+                  </>
+                )}
               </div>
             ) : (
               <p className="text-sm font-semibold text-[#64748B]">
@@ -1221,6 +1306,18 @@ export function MedicalAttention({
               </p>
             )}
           </Section>
+
+          {ginecoSectionVisible && (
+            <Section id="attn-gineco" title="Condición gineco-obstétrica actual">
+              {historia?.antecedentesGinecoObstetricos && (
+                <p className="mb-3 rounded-md border border-[#BFD2DE] bg-[#EEF6FA] px-3 py-2 text-sm font-semibold text-[#005B84]">
+                  Datos precargados como referencia desde la historia clínica. Actualícelos según el
+                  estado actual de la paciente en esta atención.
+                </p>
+              )}
+              <CondicionGinecoSection value={ginecoAtencion} onChange={setGinecoAtencion} />
+            </Section>
+          )}
 
           <Section id="attn-consulta" title="Datos de atención médica">
             <div className="grid gap-3 md:grid-cols-2">
