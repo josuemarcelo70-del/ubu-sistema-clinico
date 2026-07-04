@@ -51,6 +51,7 @@ import type {
   SignosVitales,
 } from "@/types/clinical";
 import { Modal } from "@/components/ui/Modal";
+import { AttentionDetail } from "./AttentionDetail";
 import { AutocompleteField, type AutocompleteOption } from "./AutocompleteField";
 import { DynamicAcademicFields, Field, inputClass, selectClass } from "./ClinicalFormFields";
 import { GinecoObstetricosStep } from "./GinecoObstetricos";
@@ -995,6 +996,25 @@ export function HistoriaClinicaModal({
           ? "Actualice los datos personales, hábitos y antecedentes. Editar no elimina el expediente."
           : "Complete los datos personales, hábitos y antecedentes para continuar a atención."
       }
+      subheader={
+        <div className="ubu-modal-stepbar-track">
+          {[
+            ["datos", "Datos personales"],
+            ["habitos", "Hábitos personales"],
+            ["antecedentes", "Antecedentes personales"],
+            ...(ginecoVisible ? [["gineco", "Antecedentes gineco-obstétricos"]] : []),
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setStep(key as typeof step)}
+              className={`ubu-modal-step ${step === key ? "is-active" : ""}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      }
       footer={
         <>
           <button
@@ -1018,25 +1038,6 @@ export function HistoriaClinicaModal({
         </>
       }
     >
-      <div className="ubu-modal-stepbar">
-        <div className="ubu-modal-stepbar-track">
-          {[
-            ["datos", "Datos personales"],
-            ["habitos", "Hábitos personales"],
-            ["antecedentes", "Antecedentes personales"],
-            ...(ginecoVisible ? [["gineco", "Antecedentes gineco-obstétricos"]] : []),
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setStep(key as typeof step)}
-              className={`ubu-modal-step ${step === key ? "is-active" : ""}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
       <div className="grid gap-3 md:grid-cols-4">
         <Info label="Paciente" value={`${paciente.apellidos ?? ""} ${paciente.nombres ?? ""}`.trim()} />
         <Info label="Cédula" value={paciente.cedula ?? ""} />
@@ -1708,15 +1709,11 @@ function AtencionesRealizadas({ refreshKey }: { refreshKey: number }) {
         </table>
       </div>
       {detail && (
-        <ModalFrame title="Detalle de la atención" subtitle={patientName(detail.paciente)} onClose={() => setDetail(undefined)}>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Info label="Fecha" value={(detail.atencion.fechaAtencion || detail.atencion.fechaInicio).slice(0, 10)} />
-            <Info label="Diagnóstico" value={detail.atencion.diagnosticoPrincipal ? `${detail.atencion.diagnosticoPrincipal.codigo} - ${detail.atencion.diagnosticoPrincipal.descripcion}` : detail.atencion.motivoConsulta || ""} />
-            <Info label="Enfermedad actual" value={detail.atencion.enfermedadActual || ""} />
-            <Info label="Examen físico" value={detail.atencion.examenFisico || ""} />
-            <Info label="Plan de tratamiento" value={detail.atencion.planTratamiento || ""} />
-          </div>
-        </ModalFrame>
+        <AttentionDetail
+          atencion={detail.atencion}
+          paciente={detail.paciente}
+          onClose={() => setDetail(undefined)}
+        />
       )}
     </div>
   );
@@ -1759,17 +1756,19 @@ function ModalFrame({
   title,
   subtitle,
   children,
+  subheader,
   footer,
   onClose,
 }: {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
+  subheader?: React.ReactNode;
   footer?: React.ReactNode;
   onClose: () => void;
 }) {
   return (
-    <Modal size="xl" title={title} subtitle={subtitle} footer={footer} onClose={onClose}>
+    <Modal size="xl" title={title} subtitle={subtitle} subheader={subheader} footer={footer} onClose={onClose}>
       {children}
     </Modal>
   );

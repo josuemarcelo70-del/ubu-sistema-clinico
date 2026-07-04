@@ -274,15 +274,11 @@ textarea {
   padding: 16px 28px;
 }
 
-/* Barra de pasos del modal: bloque único y sólido pegado al encabezado.
-   El margen negativo anula el padding del cuerpo para que la barra ocupe
-   todo el ancho y el contenido nunca se vea entre los pasos al hacer scroll. */
-.ubu-modal-stepbar {
-  position: sticky;
-  top: 0;
-  /* Por debajo de los dropdowns de autocompletado (z-30) para no taparlos. */
-  z-index: 20;
-  margin: -24px -28px 20px;
+/* Fila de tabs/pasos del modal: bloque único y sólido integrado justo debajo
+   del encabezado (fuera del área con scroll del cuerpo), por lo que nunca
+   queda un hueco ni se ve el contenido de atrás al hacer scroll. */
+.ubu-modal-subheader {
+  flex-shrink: 0;
   padding: 12px 28px;
   background: #fff;
   border-bottom: 1px solid var(--border-soft);
@@ -435,9 +431,7 @@ textarea {
     padding-right: 16px;
   }
 
-  .ubu-modal-stepbar {
-    margin-left: -16px;
-    margin-right: -16px;
+  .ubu-modal-subheader {
     padding-left: 16px;
     padding-right: 16px;
   }
@@ -462,15 +456,23 @@ body.modal-open {
   overflow: hidden;
 }
 
-.login-fade,
-.dashboard-fade,
-.page-fade {
+.login-fade {
   animation: fade-in 520ms ease-out both;
 }
 
-.login-card,
-.panel-slide {
+/* Entradas de módulo cortas: transiciones largas hacen percibir lento el
+   cambio entre pantallas. */
+.dashboard-fade,
+.page-fade {
+  animation: fade-in 240ms ease-out both;
+}
+
+.login-card {
   animation: slide-up 560ms ease-out both;
+}
+
+.panel-slide {
+  animation: slide-up 320ms ease-out both;
 }
 
 .login-error {
@@ -478,7 +480,7 @@ body.modal-open {
 }
 
 .dashboard-card {
-  animation: slide-up 420ms ease-out both;
+  animation: slide-up 260ms ease-out both;
 }
 
 .triage-pulse-rojo {

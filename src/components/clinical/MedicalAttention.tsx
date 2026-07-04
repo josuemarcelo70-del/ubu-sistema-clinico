@@ -1,8 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { rgb } from "pdf-lib";
 
+import {
+  A4_HEIGHT,
+  A4_WIDTH,
+  downloadBlob,
+  drawDocumentBackground,
+  drawFitText,
+  drawLabelValue,
+  drawWrappedLines,
+  embedDocumentBackground,
+  formatCityDate,
+  formatTextDate,
+  loadPdfFonts,
+  parseLocalDate,
+  PDF_TEXT,
+  safeFilenamePart,
+  splitIndicaciones,
+  valueOrFallback,
+  wrapText,
+} from "@/lib/attention-pdf";
 import {
   actualizarAtencion,
   createId,
@@ -11,6 +29,7 @@ import {
   obtenerAtencionesPorPaciente,
   obtenerHistoriaClinicaPorPaciente,
 } from "@/lib/clinical-storage";
+import { patientName, patientPeriod, patientProgram } from "@/lib/patient-format";
 import { cie10Catalog } from "@/lib/cie10-catalog";
 import {
   calcularEdadGestacional,
@@ -45,6 +64,12 @@ import type {
   SignosVitales,
 } from "@/types/clinical";
 import { Modal } from "@/components/ui/Modal";
+import {
+  AttentionDetail,
+  AttentionHistoryTable,
+  EstudiosHistoryTable,
+  estudiosDeAtenciones,
+} from "./AttentionDetail";
 import { AutocompleteField, type AutocompleteOption } from "./AutocompleteField";
 import { Field, inputClass, selectClass } from "./ClinicalFormFields";
 import { CondicionGinecoSection, gestacionConFum } from "./GinecoObstetricos";
@@ -139,38 +164,6 @@ function currentDoctor() {
   };
 }
 
-function patientName(paciente?: Paciente) {
-  return paciente ? `${paciente.apellidos} ${paciente.nombres}`.trim() : "";
-}
-
-function patientProgram(paciente?: Paciente) {
-  if (!paciente) return "";
-  if (paciente.tipoUsuario === "estudiante" && paciente.nivelAcademico === "pregrado") {
-    return [paciente.carreraNombre, paciente.facultadNombre].filter(Boolean).join(" / ");
-  }
-  if (paciente.tipoUsuario === "estudiante" && paciente.nivelAcademico === "posgrado") {
-    return [paciente.programaPosgradoNombre, paciente.facultadNombre].filter(Boolean).join(" / ");
-  }
-  if (paciente.tipoUsuario === "docente") {
-    return [paciente.facultadNombre || paciente.dependencia, paciente.cargo].filter(Boolean).join(" / ");
-  }
-  if (paciente.tipoUsuario === "administrativo" || paciente.tipoUsuario === "trabajador") {
-    return [paciente.dependencia, paciente.cargo].filter(Boolean).join(" / ");
-  }
-  return "";
-}
-
-function patientPeriod(paciente?: Paciente) {
-  if (!paciente) return "";
-  if (paciente.tipoUsuario === "estudiante" && paciente.nivelAcademico === "pregrado") {
-    return [paciente.ciclo, paciente.periodoAcademicoNombre].filter(Boolean).join(" / ");
-  }
-  if (paciente.tipoUsuario === "estudiante" && paciente.nivelAcademico === "posgrado") {
-    return ["Postgrado", paciente.periodoAcademicoNombre].filter(Boolean).join(" / ");
-  }
-  return "No aplica";
-}
-
 function makeVitalsDraft(signos?: SignosVitales): VitalSignsDraft {
   const draft = { ...emptyVitals, ...(signos ?? {}) };
   // Los registros antiguos pueden traer la talla en metros: se normaliza a cm
@@ -183,21 +176,6 @@ function makeVitalsDraft(signos?: SignosVitales): VitalSignsDraft {
 function generateOrderCode(prefix: "FARM" | "LAB" | "ENF") {
   return `${prefix}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
-
-const MONTHS_ES = [
-  "enero",
-  "febrero",
-  "marzo",
-  "abril",
-  "mayo",
-  "junio",
-  "julio",
-  "agosto",
-  "septiembre",
-  "octubre",
-  "noviembre",
-  "diciembre",
-];
 
 const NUMBER_WORDS_ES: Record<number, string> = {
   1: "uno",
@@ -232,10 +210,6 @@ const NUMBER_WORDS_ES: Record<number, string> = {
   30: "treinta",
 };
 
-const A4_WIDTH = 596;
-const A4_HEIGHT = 842;
-const PDF_TEXT = rgb(0, 0, 0);
-
 type CertificateForm = {
   ciudadFecha: string;
   medico: string;
@@ -250,31 +224,6 @@ type CertificateForm = {
   desde: string;
   hasta: string;
 };
-
-type PdfFonts = {
-  regular: import("pdf-lib").PDFFont;
-  bold: import("pdf-lib").PDFFont;
-};
-
-function valueOrFallback(value?: string | number) {
-  const text = String(value ?? "").trim();
-  return text || "No registra";
-}
-
-function parseLocalDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return new Date();
-  return new Date(year, month - 1, day);
-}
-
-function formatTextDate(value: string) {
-  const date = parseLocalDate(value);
-  return `${String(date.getDate()).padStart(2, "0")} de ${MONTHS_ES[date.getMonth()]} de ${date.getFullYear()}`;
-}
-
-function formatCityDate(value: string) {
-  return `Loja, ${formatTextDate(value)}`;
-}
 
 function formatTime24(value: string) {
   const match = value.match(/^(\d{1,2}):(\d{2})/);
@@ -295,154 +244,12 @@ function daysWithWords(value: string) {
   return `${days} (${NUMBER_WORDS_ES[days]}) ${days === 1 ? "día" : "días"}`;
 }
 
-function safeFilenamePart(value: string) {
-  return valueOrFallback(value).replace(/[^0-9A-Za-z-]+/g, "-").replace(/^-+|-+$/g, "") || "sin-registro";
-}
-
-function downloadBlob(filename: string, bytes: Uint8Array, type = "application/pdf") {
-  const data = new Uint8Array(bytes.length);
-  data.set(bytes);
-  const blob = new Blob([data.buffer], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-async function loadPdfFonts(pdfDoc: import("pdf-lib").PDFDocument): Promise<PdfFonts> {
-  const [{ default: fontkit }, regularBytes, boldBytes] = await Promise.all([
-    import("@pdf-lib/fontkit"),
-    fetch("/fonts/montserrat-regular.ttf").then((response) => response.arrayBuffer()),
-    fetch("/fonts/montserrat-bold.ttf").then((response) => response.arrayBuffer()),
-  ]);
-  pdfDoc.registerFontkit(fontkit);
-  return {
-    regular: await pdfDoc.embedFont(regularBytes, { subset: true }),
-    bold: await pdfDoc.embedFont(boldBytes, { subset: true }),
-  };
-}
-
-function wrapText(text: string, font: import("pdf-lib").PDFFont, size: number, maxWidth: number) {
-  const normalized = valueOrFallback(text).replace(/\s+/g, " ").trim();
-  const words = normalized.split(" ");
-  const lines: string[] = [];
-  let current = "";
-  words.forEach((word) => {
-    const next = current ? `${current} ${word}` : word;
-    if (font.widthOfTextAtSize(next, size) <= maxWidth) {
-      current = next;
-      return;
-    }
-    if (current) lines.push(current);
-    current = word;
-  });
-  if (current) lines.push(current);
-  return lines;
-}
-
-async function embedDocumentBackground(pdfDoc: import("pdf-lib").PDFDocument) {
-  const bytes = await fetch("/brand/fondo-documentos.jpg").then((response) => response.arrayBuffer());
-  return pdfDoc.embedJpg(bytes);
-}
-
-function drawDocumentBackground(page: import("pdf-lib").PDFPage, background: import("pdf-lib").PDFImage) {
-  page.drawImage(background, {
-    x: 0,
-    y: 0,
-    width: A4_WIDTH,
-    height: A4_HEIGHT,
-  });
-}
-
 async function drawCertificateBase(
   pdfDoc: import("pdf-lib").PDFDocument,
   page: import("pdf-lib").PDFPage,
 ) {
   const background = await embedDocumentBackground(pdfDoc);
   drawDocumentBackground(page, background);
-}
-
-function drawFitText({
-  page,
-  text,
-  x,
-  y,
-  maxWidth,
-  size,
-  font,
-  color = PDF_TEXT,
-  align = "left",
-}: {
-  page: import("pdf-lib").PDFPage;
-  text: string;
-  x: number;
-  y: number;
-  maxWidth: number;
-  size: number;
-  font: import("pdf-lib").PDFFont;
-  color?: import("pdf-lib").RGB;
-  align?: "left" | "center" | "right";
-}) {
-  const value = valueOrFallback(text);
-  let fontSize = size;
-  while (font.widthOfTextAtSize(value, fontSize) > maxWidth && fontSize > 8) fontSize -= 0.25;
-  const width = Math.min(font.widthOfTextAtSize(value, fontSize), maxWidth);
-  const drawX = align === "right" ? x + maxWidth - width : align === "center" ? x + (maxWidth - width) / 2 : x;
-  page.drawText(value, { x: drawX, y, size: fontSize, font, color, maxWidth });
-}
-
-function drawWrappedLines({
-  page,
-  text,
-  x,
-  y,
-  maxWidth,
-  size,
-  font,
-  color = PDF_TEXT,
-  lineHeight = size + 4,
-}: {
-  page: import("pdf-lib").PDFPage;
-  text: string;
-  x: number;
-  y: number;
-  maxWidth: number;
-  size: number;
-  font: import("pdf-lib").PDFFont;
-  color?: import("pdf-lib").RGB;
-  lineHeight?: number;
-}) {
-  const lines = wrapText(text, font, size, maxWidth);
-  lines.forEach((line, index) => page.drawText(line, { x, y: y - index * lineHeight, size, font, color, maxWidth }));
-  return y - lines.length * lineHeight;
-}
-
-function drawLabelValue(page: import("pdf-lib").PDFPage, fonts: PdfFonts, label: string, value: string, x: number, y: number, maxWidth: number, size = 10.5) {
-  const labelText = `${label}: `;
-  page.drawText(labelText, { x, y, size, font: fonts.bold, color: PDF_TEXT });
-  const valueX = x + fonts.bold.widthOfTextAtSize(labelText, size);
-  return drawWrappedLines({
-    page,
-    text: value,
-    x: valueX,
-    y,
-    maxWidth: Math.max(maxWidth - (valueX - x), 80),
-    size,
-    font: fonts.regular,
-    lineHeight: size + 4,
-  });
-}
-
-function splitIndicaciones(text: string) {
-  const normalized = text.trim();
-  if (!normalized) return ["No registra"];
-  const lines = normalized
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:\d+[\).-]|[-*•])\s*/, "").trim())
-    .filter(Boolean);
-  return lines.length > 1 ? lines : [normalized.replace(/^\s*(?:\d+[\).-]|[-*•])\s*/, "").trim()];
 }
 
 function doctorSignatureLines(doctor: ReturnType<typeof currentDoctor>, nameOverride?: string, cargoOverride?: string) {
@@ -716,14 +523,31 @@ async function generateLaboratorioPdf(data: {
   return pdfDoc.save();
 }
 
-function Section({ id, title, children }: { id?: string; title: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section id={id} className="ubu-card scroll-mt-16 p-4">
+    <section className="ubu-card p-4">
       <h3 className="ubu-section-title">{title}</h3>
       <div className="mt-4">{children}</div>
     </section>
   );
 }
+
+// Pestañas reales de la atención médica: cada una monta solo su contenido,
+// el estado del formulario vive en el componente padre y no se pierde al
+// cambiar de pestaña.
+type AttentionTabKey =
+  | "paciente"
+  | "vitales"
+  | "antecedentes"
+  | "gineco"
+  | "consulta"
+  | "cie10"
+  | "tratamiento"
+  | "farmacia"
+  | "laboratorio"
+  | "certificados"
+  | "referencia"
+  | "historial";
 
 function MiniInfo({ label, value }: { label: string; value?: string }) {
   return (
@@ -824,6 +648,7 @@ export function MedicalAttention({
   const ginecoSectionVisible = esSexoFemenino(paciente?.sexo) || tieneDatosGineco(ginecoAtencion);
   const [message, setMessage] = useState("");
   const [confirmFarmacia, setConfirmFarmacia] = useState(false);
+
   const [success, setSuccess] = useState<{ title: string; code: string }>();
 
   const historial = useMemo(
@@ -833,7 +658,30 @@ export function MedicalAttention({
         : [],
     [derivacion.id, paciente],
   );
+  const estudiosHistorial = useMemo(() => estudiosDeAtenciones(historial), [historial]);
   const [historyDetail, setHistoryDetail] = useState<(typeof historial)[number]>();
+  const [activeTab, setActiveTab] = useState<AttentionTabKey>("paciente");
+
+  const tabs = useMemo<Array<[AttentionTabKey, string]>>(
+    () => [
+      ["paciente", "Paciente"],
+      ["vitales", "Signos vitales"],
+      ["antecedentes", "Antecedentes"],
+      ...(ginecoSectionVisible ? ([["gineco", "Gineco-obstétrico"]] as Array<[AttentionTabKey, string]>) : []),
+      ["consulta", "Consulta"],
+      ["cie10", "CIE-10"],
+      ["tratamiento", "Tratamiento"],
+      ["farmacia", "Farmacia"],
+      ["laboratorio", "Laboratorio"],
+      ["certificados", "Certificados"],
+      ["referencia", "Referencia"],
+      ["historial", "Historial"],
+    ],
+    [ginecoSectionVisible],
+  );
+  // Si la pestaña gineco deja de estar disponible, se cae a Consulta.
+  const currentTab: AttentionTabKey =
+    activeTab === "gineco" && !ginecoSectionVisible ? "consulta" : activeTab;
 
   const cieOptions: AutocompleteOption[] = useMemo(
     () =>
@@ -1146,6 +994,22 @@ export function MedicalAttention({
         title="Atención médica"
         onClose={onClose}
         closeLabel="Cerrar atención médica"
+        subheader={
+          <div className="ubu-modal-stepbar-track" role="tablist" aria-label="Secciones de la atención médica">
+            {tabs.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={currentTab === key}
+                onClick={() => setActiveTab(key)}
+                className={`ubu-modal-step ${currentTab === key ? "is-active" : ""}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        }
         footer={
           <>
             <button type="button" onClick={persistDraft} className="ubu-btn ubu-btn-secondary">Guardar borrador</button>
@@ -1154,39 +1018,14 @@ export function MedicalAttention({
           </>
         }
       >
-          <div className="ubu-modal-stepbar">
-            <div className="ubu-modal-stepbar-track">
-              {[
-                ["Paciente", "attn-paciente"],
-                ["Signos vitales", "attn-vitales"],
-                ["Antecedentes", "attn-antecedentes"],
-                ...(ginecoSectionVisible ? [["Gineco-obstétrico", "attn-gineco"]] : []),
-                ["Consulta", "attn-consulta"],
-                ["CIE-10", "attn-cie10"],
-                ["Tratamiento", "attn-tratamiento"],
-                ["Farmacia", "attn-farmacia"],
-                ["Laboratorio", "attn-laboratorio"],
-                ["Certificados", "attn-certificados"],
-                ["Referencia", "attn-referencia"],
-              ].map(([label, sectionId]) => (
-                <button
-                  key={sectionId}
-                  type="button"
-                  onClick={() => document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                  className="ubu-modal-step"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
           {message && (
             <div className="rounded-md border border-[#BFD2DE] bg-[#EEF6FA] px-3 py-2 text-sm font-semibold text-[#005B84]">
               {message}
             </div>
           )}
 
-          <Section id="attn-paciente" title="Resumen del paciente">
+          {currentTab === "paciente" && (
+          <Section title="Resumen del paciente">
             <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
               <MiniInfo label="Paciente" value={patientName(paciente)} />
               <MiniInfo label="Cédula" value={cedula} />
@@ -1217,8 +1056,10 @@ export function MedicalAttention({
               )}
             </div>
           </Section>
+          )}
 
-          <Section id="attn-vitales" title="Signos vitales">
+          {currentTab === "vitales" && (
+          <Section title="Signos vitales">
             <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
               {vitalFieldDefs.map(({ key, label, placeholder, inputMode }) => (
                 <Field key={key} label={label}>
@@ -1243,8 +1084,10 @@ export function MedicalAttention({
               </Field>
             </div>
           </Section>
+          )}
 
-          <Section id="attn-antecedentes" title="Antecedentes de la historia clínica">
+          {currentTab === "antecedentes" && (
+          <Section title="Antecedentes de la historia clínica">
             {historia ? (
               <div className="grid gap-3 md:grid-cols-2">
                 <MiniInfo
@@ -1306,9 +1149,10 @@ export function MedicalAttention({
               </p>
             )}
           </Section>
+          )}
 
-          {ginecoSectionVisible && (
-            <Section id="attn-gineco" title="Condición gineco-obstétrica actual">
+          {currentTab === "gineco" && ginecoSectionVisible && (
+            <Section title="Condición gineco-obstétrica actual">
               {historia?.antecedentesGinecoObstetricos && (
                 <p className="mb-3 rounded-md border border-[#BFD2DE] bg-[#EEF6FA] px-3 py-2 text-sm font-semibold text-[#005B84]">
                   Datos precargados como referencia desde la historia clínica. Actualícelos según el
@@ -1319,7 +1163,8 @@ export function MedicalAttention({
             </Section>
           )}
 
-          <Section id="attn-consulta" title="Datos de atención médica">
+          {currentTab === "consulta" && (
+          <Section title="Datos de atención médica">
             <div className="grid gap-3 md:grid-cols-2">
               <Field label="Motivo de consulta">
                 <textarea value={motivoConsulta} onChange={(event) => setMotivoConsulta(event.target.value)} className={`${inputClass} min-h-24`} />
@@ -1335,8 +1180,10 @@ export function MedicalAttention({
               </Field>
             </div>
           </Section>
+          )}
 
-          <Section id="attn-cie10" title="Diagnóstico CIE-10">
+          {currentTab === "cie10" && (
+          <Section title="Diagnóstico CIE-10">
             <div className="grid gap-3 md:grid-cols-[1fr_180px_auto] md:items-end">
               <Field label="Buscar por código o palabra">
                 <AutocompleteField
@@ -1396,8 +1243,11 @@ export function MedicalAttention({
               </table>
             </div>
           </Section>
+          )}
 
-          <Section id="attn-tratamiento" title="Plan de tratamiento">
+          {currentTab === "tratamiento" && (
+          <>
+          <Section title="Plan de tratamiento">
             <Field label="Indicaciones medicas">
               <textarea value={planTratamiento} onChange={(event) => setPlanTratamiento(event.target.value)} className={`${inputClass} min-h-32`} />
             </Field>
@@ -1407,9 +1257,18 @@ export function MedicalAttention({
               </button>
             </div>
           </Section>
+          <Section title="Indicaciones a Enfermería">
+            <Field label="Indicaciones">
+              <textarea value={indicacionTexto} onChange={(event) => setIndicacionTexto(event.target.value)} className={`${inputClass} min-h-28`} />
+            </Field>
+            <button type="button" onClick={sendNursing} className="mt-3 rounded-md bg-[#005B84] px-4 py-2 text-sm font-semibold text-white">Enviar a Enfermeria</button>
+            {indicacionEnfermeria && <p className="mt-2 text-sm font-semibold text-[#166534]">Código: {indicacionEnfermeria.codigo}</p>}
+          </Section>
+          </>
+          )}
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Section id="attn-farmacia" title="Orden a Farmacia">
+          {currentTab === "farmacia" && (
+            <Section title="Orden a Farmacia">
               <div className="grid gap-3 md:grid-cols-[1fr_1fr_90px_auto] md:items-end">
                 <Field label="Medicamento">
                   <AutocompleteField
@@ -1437,8 +1296,10 @@ export function MedicalAttention({
               <button type="button" onClick={() => setConfirmFarmacia(true)} className="mt-3 rounded-md bg-[#D71920] px-4 py-2 text-sm font-semibold text-white">Enviar orden a Farmacia</button>
               {ordenFarmacia && <p className="mt-2 text-sm font-semibold text-[#166534]">Código: {ordenFarmacia.codigo}</p>}
             </Section>
+          )}
 
-            <Section id="attn-laboratorio" title="Orden a Laboratorio">
+          {currentTab === "laboratorio" && (
+            <Section title="Orden a Laboratorio">
               <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
                 <Field label="Estudio complementario">
                   <AutocompleteField
@@ -1460,26 +1321,19 @@ export function MedicalAttention({
               </div>
               {ordenLaboratorio && <p className="mt-2 text-sm font-semibold text-[#166534]">Código: {ordenLaboratorio.codigo}</p>}
             </Section>
-          </div>
+          )}
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Section title="Indicaciones a Enfermería">
-              <Field label="Indicaciones">
-                <textarea value={indicacionTexto} onChange={(event) => setIndicacionTexto(event.target.value)} className={`${inputClass} min-h-28`} />
-              </Field>
-              <button type="button" onClick={sendNursing} className="mt-3 rounded-md bg-[#005B84] px-4 py-2 text-sm font-semibold text-white">Enviar a Enfermeria</button>
-              {indicacionEnfermeria && <p className="mt-2 text-sm font-semibold text-[#166534]">Código: {indicacionEnfermeria.codigo}</p>}
-            </Section>
-
-            <Section id="attn-certificados" title="Certificado médico">
+          {currentTab === "certificados" && (
+            <Section title="Certificado médico">
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => setCertModal("atencion")} className="rounded-md border border-[#005B84] px-4 py-2 text-sm font-semibold text-[#005B84]">Generar certificado de atención</button>
                 <button type="button" onClick={() => setCertModal("reposo")} className="rounded-md border border-[#005B84] px-4 py-2 text-sm font-semibold text-[#005B84]">Generar certificado de reposo</button>
               </div>
               <OrderList rows={certificados.map((item) => `${item.tipo} - ${new Date(item.fecha).toLocaleString("es-EC")}`)} onRemove={(index) => setCertificados((items) => items.filter((_, itemIndex) => itemIndex !== index))} />
             </Section>
-          </div>
+          )}
 
+          {currentTab === "referencia" && (
           <div className="grid gap-4 xl:grid-cols-2">
             <Section title="Procedimiento invasivo y no invasivo">
               <label className="flex items-center gap-2 text-sm font-semibold text-[#0F2F44]">
@@ -1503,7 +1357,7 @@ export function MedicalAttention({
               )}
             </Section>
 
-            <Section id="attn-referencia" title="Referencia / Derivación">
+            <Section title="Referencia / Derivación">
               <label className="flex items-center gap-2 text-sm font-semibold text-[#0F2F44]">
                 <input type="checkbox" checked={referencia.emitida} onChange={(event) => setReferencia((row) => ({ ...row, emitida: event.target.checked }))} />
                 Se emitió una referencia o derivación
@@ -1525,52 +1379,26 @@ export function MedicalAttention({
               )}
             </Section>
           </div>
+          )}
 
+          {currentTab === "historial" && (
+          <>
           <Section title="Historial de atenciones">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] border-collapse text-sm">
-                <thead className="bg-[#EEF6FA] text-left text-[11px] uppercase tracking-wide text-[#64748B]">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Fecha</th>
-                    <th className="px-3 py-2 font-semibold">Servicio</th>
-                    <th className="px-3 py-2 font-semibold">Profesional</th>
-                    <th className="px-3 py-2 font-semibold">Diagnóstico / motivo</th>
-                    <th className="px-3 py-2 font-semibold">Acción</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#D7E3EC]">
-                  {historial.map((item) => (
-                    <tr key={item.id}>
-                      <td className="px-3 py-2">{(item.fechaAtencion || item.fechaInicio).slice(0, 10)}</td>
-                      <td className="px-3 py-2">{item.servicio}</td>
-                      <td className="px-3 py-2">{item.profesionalNombre || item.profesionalId}</td>
-                      <td className="px-3 py-2">{item.diagnosticoPrincipal ? `${item.diagnosticoPrincipal.codigo} ${item.diagnosticoPrincipal.descripcion}` : item.motivoConsulta || "No registra"}</td>
-                      <td className="px-3 py-2">
-                        <button type="button" onClick={() => setHistoryDetail(item)} className="rounded-md border border-[#D7E3EC] px-3 py-1.5 text-xs font-semibold text-[#005B84]">Ver</button>
-                      </td>
-                    </tr>
-                  ))}
-                  {historial.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-5 text-center text-sm font-semibold text-[#64748B]">Sin atenciones previas registradas.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <AttentionHistoryTable atenciones={historial} onVer={setHistoryDetail} />
           </Section>
+          <Section title="Historial de estudios complementarios">
+            <EstudiosHistoryTable estudios={estudiosHistorial} onVer={setHistoryDetail} />
+          </Section>
+          </>
+          )}
       </Modal>
 
       {historyDetail && (
-        <SmallModal title="Detalle de la atención" onClose={() => setHistoryDetail(undefined)}>
-          <div className="space-y-3">
-            <MiniInfo label="Fecha" value={(historyDetail.fechaAtencion || historyDetail.fechaInicio).slice(0, 10)} />
-            <MiniInfo label="Diagnóstico" value={historyDetail.diagnosticoPrincipal ? `${historyDetail.diagnosticoPrincipal.codigo} - ${historyDetail.diagnosticoPrincipal.descripcion}` : historyDetail.motivoConsulta} />
-            <MiniInfo label="Enfermedad actual" value={historyDetail.enfermedadActual} />
-            <MiniInfo label="Examen físico" value={historyDetail.examenFisico} />
-            <MiniInfo label="Plan de tratamiento" value={historyDetail.planTratamiento} />
-          </div>
-        </SmallModal>
+        <AttentionDetail
+          atencion={historyDetail}
+          paciente={paciente}
+          onClose={() => setHistoryDetail(undefined)}
+        />
       )}
 
       {confirmFarmacia && (

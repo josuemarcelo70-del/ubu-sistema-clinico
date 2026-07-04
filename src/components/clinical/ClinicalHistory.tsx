@@ -1,41 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import {
   createId,
   eliminarHistoriaClinicaCompleta,
-  hasHistoriaClinica,
-  obtenerAtencionesPorPaciente,
-  obtenerHistoriaClinicaPorPaciente,
+  obtenerAtenciones,
+  obtenerHistoriasClinicas,
   obtenerPacientes,
 } from "@/lib/clinical-storage";
-import { formatearEdadGestacional } from "@/lib/gineco";
 import { SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
-import { normalizarTallaCm } from "@/lib/vital-signs";
-import type { Atencion, HistoriaClinica, Paciente } from "@/types/clinical";
-import { Modal } from "@/components/ui/Modal";
-import { inputClass } from "./ClinicalFormFields";
-import { HistoriaClinicaModal } from "./MedicineQueue";
+import type { HistoriaClinica, Paciente, TipoUsuario } from "@/types/clinical";
+import {
+  categoriaConfig,
+  categoriaDePaciente,
+  ClinicalHistoryCategory,
+  type CategoriaHc,
+  type HcRow,
+} from "./ClinicalHistoryCategory";
+import { ClinicalHistoryDetail } from "./ClinicalHistoryDetail";
 
-const tipoUsuarioLabels: Record<string, string> = {
-  estudiante: "Estudiante",
-  docente: "Docente",
-  administrativo: "Administrativo",
-  trabajador: "Trabajador",
-};
-
-function facultadDependencia(paciente: Paciente) {
-  if (paciente.tipoUsuario === "estudiante") {
-    return [
-      paciente.facultadNombre,
-      paciente.nivelAcademico === "posgrado" ? paciente.programaPosgradoNombre : paciente.carreraNombre,
-    ]
-      .filter(Boolean)
-      .join(" / ");
-  }
-  return [paciente.dependencia || paciente.facultadNombre, paciente.cargo].filter(Boolean).join(" / ");
-}
+// El modal de apertura/edición vive en MedicineQueue junto con el flujo de
+// atención (módulos grandes). Se carga bajo demanda para que abrir el módulo
+// Historia clínica no descargue todo ese código de entrada.
+const HistoriaClinicaModal = dynamic(
+  () => import("./MedicineQueue").then((mod) => mod.HistoriaClinicaModal),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#062B49]/45">
+        <div className="rounded-lg border border-[#D7E3EC] bg-white px-5 py-3 text-sm font-bold text-[#005B84] shadow-lg">
+          Cargando formulario…
+        </div>
+      </div>
+    ),
+  },
+);
 
 // Solo el rol administrador puede borrar historias clínicas completas; el
 // resto de roles ve la acción deshabilitada.
@@ -55,9 +56,9 @@ function isAdminSnapshot() {
   }
 }
 
-// Paciente vacío para aperturar una historia clínica desde cero (estudiante,
-// docente, administrativo o trabajador). Solo se persiste al guardar el modal.
-function nuevoPacienteBase(): Paciente {
+// Paciente vacío para aperturar una historia clínica desde cero con el tipo
+// de usuario de la categoría activa. Solo se persiste al guardar el modal.
+function nuevoPacienteBase(tipoUsuario: TipoUsuario): Paciente {
   const now = new Date().toISOString();
   return {
     id: createId("pac"),
@@ -71,19 +72,92 @@ function nuevoPacienteBase(): Paciente {
     correo: "",
     correoInstitucional: "",
     direccion: "",
-    tipoUsuario: "estudiante",
-    nivelAcademico: "pregrado",
+    tipoUsuario,
+    nivelAcademico: tipoUsuario === "estudiante" ? "pregrado" : undefined,
     fechaCreacion: now,
     fechaActualizacion: now,
   };
 }
 
-// Módulo oficial de gestión clínica del paciente: búsqueda, apertura y
-// seguimiento de historias clínicas. La atención médica se inicia desde
-// "Atenciones pendientes"; aquí se consulta y apertura el expediente.
+// Una sola lectura de localStorage por actualización: se indexan historias y
+// atenciones en mapas para no repetir JSON.parse por cada paciente.
+function construirFilas(): Record<CategoriaHc, HcRow[]> {
+  const historiaPorPaciente = new Map<string, HistoriaClinica>();
+  const historiaPorNumero = new Map<string, HistoriaClinica>();
+  for (const historia of obtenerHistoriasClinicas()) {
+    historiaPorPaciente.set(historia.pacienteId, historia);
+    historiaPorNumero.set(historia.numeroHistoriaClinica.trim().toLowerCase(), historia);
+  }
+
+  const ultimaAtencionPorPaciente = new Map<string, string>();
+  for (const atencion of obtenerAtenciones()) {
+    if (atencion.estado !== "finalizada") continue;
+    const fecha = atencion.fechaAtencion || atencion.fechaFinalizacion || atencion.fechaInicio || "";
+    if (fecha > (ultimaAtencionPorPaciente.get(atencion.pacienteId) ?? "")) {
+      ultimaAtencionPorPaciente.set(atencion.pacienteId, fecha);
+    }
+  }
+
+  const porCategoria: Record<CategoriaHc, HcRow[]> = {
+    estudiantes: [],
+    docentes: [],
+    personal: [],
+  };
+  for (const paciente of obtenerPacientes()) {
+    const cedula = paciente.cedula?.trim().toLowerCase() ?? "";
+    const historia =
+      historiaPorPaciente.get(paciente.id) ??
+      (cedula ? historiaPorNumero.get(cedula) : undefined);
+    porCategoria[categoriaDePaciente(paciente)].push({
+      paciente,
+      existsHc: Boolean(cedula) && Boolean(historia),
+      fechaApertura: (historia?.fechaApertura || paciente.fechaAperturaHistoriaClinica || "").slice(0, 10),
+      ultimaAtencion: (ultimaAtencionPorPaciente.get(paciente.id) ?? "").slice(0, 10),
+    });
+  }
+  for (const filas of Object.values(porCategoria)) {
+    filas.sort((a, b) =>
+      `${a.paciente.apellidos} ${a.paciente.nombres}`.localeCompare(
+        `${b.paciente.apellidos} ${b.paciente.nombres}`,
+      ),
+    );
+  }
+  return porCategoria;
+}
+
+const categoriaIcons: Record<CategoriaHc, React.ReactNode> = {
+  estudiantes: (
+    <>
+      <path d="M12 4 2.5 8.5 12 13l9.5-4.5z" />
+      <path d="M6 10.5V16c0 1.2 2.7 2.5 6 2.5s6-1.3 6-2.5v-5.5" />
+      <path d="M21.5 8.5V14" />
+    </>
+  ),
+  docentes: (
+    <>
+      <path d="M3 4h18v12H3z" />
+      <path d="M7 20h10" />
+      <path d="M12 16v4" />
+      <path d="M7 8h6" />
+      <path d="M7 11.5h4" />
+    </>
+  ),
+  personal: (
+    <>
+      <path d="M4 8h16v12H4z" />
+      <path d="M9 8V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V8" />
+      <path d="M4 13h16" />
+      <path d="M12 12v2.5" />
+    </>
+  ),
+};
+
+// Módulo oficial de gestión clínica del paciente. La vista principal muestra
+// tarjetas de acceso por tipo de usuario; cada tarjeta abre el archivo de esa
+// categoría. La atención médica se inicia desde "Atenciones pendientes".
 export function ClinicalHistory({ onBack }: { onBack: () => void }) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const [query, setQuery] = useState("");
+  const [categoria, setCategoria] = useState<CategoriaHc | null>(null);
   const [aperturaTarget, setAperturaTarget] = useState<Paciente>();
   const [editTarget, setEditTarget] = useState<Paciente>();
   const [detailTarget, setDetailTarget] = useState<Paciente>();
@@ -98,97 +172,77 @@ export function ClinicalHistory({ onBack }: { onBack: () => void }) {
     return () => window.removeEventListener("ubu-clinical-storage-updated", handleUpdate);
   }, []);
 
-  const rows = useMemo(() => {
+  const filasPorCategoria = useMemo(() => {
     void refreshKey;
-    const term = query.trim().toLowerCase();
-    return obtenerPacientes()
-      .filter((paciente) => {
-        if (!term) return true;
-        return [
-          paciente.cedula,
-          paciente.historiaClinicaNumero,
-          paciente.historiaClinica,
-          paciente.nombres,
-          paciente.apellidos,
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(term);
-      })
-      .map((paciente) => {
-        const historia = obtenerHistoriaClinicaPorPaciente(paciente.id);
-        const ultimaAtencion = obtenerAtencionesPorPaciente(paciente.id)
-          .map((atencion) => atencion.fechaAtencion || atencion.fechaFinalizacion || atencion.fechaInicio)
-          .filter(Boolean)
-          .sort()
-          .at(-1);
-        return {
-          paciente,
-          existsHc: hasHistoriaClinica(paciente),
-          fechaApertura: (historia?.fechaApertura || paciente.fechaAperturaHistoriaClinica || "").slice(0, 10),
-          ultimaAtencion: (ultimaAtencion || "").slice(0, 10),
-        };
-      })
-      .sort((a, b) =>
-        `${a.paciente.apellidos} ${a.paciente.nombres}`.localeCompare(
-          `${b.paciente.apellidos} ${b.paciente.nombres}`,
-        ),
-      );
-  }, [query, refreshKey]);
+    return construirFilas();
+  }, [refreshKey]);
 
-  function deleteHistoria(paciente: Paciente) {
-    if (!isAdmin) return;
-    const ok = window.confirm(
-      "Esta acción eliminará todo el contenido de la historia clínica. ¿Está seguro de continuar?",
-    );
-    if (!ok) return;
-    const palabra = window.prompt(
-      'Confirmación final: escriba "ELIMINAR" para borrar todo el contenido de la historia clínica.',
-    );
-    if ((palabra ?? "").trim().toUpperCase() !== "ELIMINAR") {
-      setMessage("Eliminación cancelada: la palabra de confirmación no coincide.");
-      return;
-    }
-    eliminarHistoriaClinicaCompleta(paciente.id);
-    setMessage(
-      `Historia clínica de ${paciente.apellidos} ${paciente.nombres} eliminada por el administrador.`,
-    );
-    setRefreshKey((value) => value + 1);
-  }
+  const abrirCategoria = useCallback((next: CategoriaHc) => {
+    setCategoria(next);
+    setMessage("");
+  }, []);
+
+  const volverATarjetas = useCallback(() => {
+    setCategoria(null);
+    setMessage("");
+  }, []);
+
+  const nuevaHistoria = useCallback((tipo: TipoUsuario) => {
+    setAperturaTarget(nuevoPacienteBase(tipo));
+  }, []);
+
+  const abrirDetalle = useCallback((paciente: Paciente) => setDetailTarget(paciente), []);
+  const editarHistoria = useCallback((paciente: Paciente) => setEditTarget(paciente), []);
+  const aperturarHistoria = useCallback((paciente: Paciente) => setAperturaTarget(paciente), []);
+
+  const eliminarHistoria = useCallback(
+    (paciente: Paciente) => {
+      if (!isAdmin) return;
+      const ok = window.confirm(
+        "Esta acción eliminará todo el contenido de la historia clínica. ¿Está seguro de continuar?",
+      );
+      if (!ok) return;
+      const palabra = window.prompt(
+        'Confirmación final: escriba "ELIMINAR" para borrar todo el contenido de la historia clínica.',
+      );
+      if ((palabra ?? "").trim().toUpperCase() !== "ELIMINAR") {
+        setMessage("Eliminación cancelada: la palabra de confirmación no coincide.");
+        return;
+      }
+      eliminarHistoriaClinicaCompleta(paciente.id);
+      setMessage(
+        `Historia clínica de ${paciente.apellidos} ${paciente.nombres} eliminada por el administrador.`,
+      );
+      setRefreshKey((value) => value + 1);
+    },
+    [isAdmin],
+  );
 
   return (
     <section className="dashboard-fade mx-auto max-w-7xl space-y-4">
-      <div className="rounded-lg border border-[#D7E3EC] bg-white shadow-sm">
-        <div className="h-1 bg-[linear-gradient(90deg,#D71920_0%,#D71920_26%,#005B84_26%,#005B84_100%)]" />
-        <div className="flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#005B84]">
-              Medicina general
-            </p>
-            <h1 className="mt-1 text-2xl font-black text-[#082F49]">Historia clínica</h1>
-            <p className="mt-1 text-sm font-semibold text-[#64748B]">
-              Archivo clínico: consulta, apertura y edición de historias clínicas de estudiantes,
-              docentes, administrativos y trabajadores
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
+      {!categoria && (
+        <div className="rounded-lg border border-[#D7E3EC] bg-white shadow-sm">
+          <div className="h-1 bg-[linear-gradient(90deg,#D71920_0%,#D71920_26%,#005B84_26%,#005B84_100%)]" />
+          <div className="flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#005B84]">
+                Medicina general
+              </p>
+              <h1 className="mt-1 text-2xl font-black text-[#082F49]">Historia clínica</h1>
+              <p className="mt-1 text-sm font-semibold text-[#64748B]">
+                Archivo clínico: consulta, apertura y edición de historias clínicas.
+              </p>
+            </div>
             <button
               type="button"
               onClick={onBack}
-              className="rounded-md border border-[#D7E3EC] px-3 py-2 text-sm font-bold text-[#082F49] transition hover:border-[#005B84] hover:text-[#005B84]"
+              className="w-fit rounded-md border border-[#D7E3EC] px-3 py-2 text-sm font-bold text-[#082F49] transition hover:border-[#005B84] hover:text-[#005B84]"
             >
               Volver
             </button>
-            <button
-              type="button"
-              onClick={() => setAperturaTarget(nuevoPacienteBase())}
-              className="rounded-md bg-[#062B49] px-3 py-2 text-sm font-black text-white transition hover:bg-[#005B84]"
-            >
-              Añadir historia clínica
-            </button>
           </div>
         </div>
-      </div>
+      )}
 
       {message && (
         <div className="rounded-md border border-[#BFD2DE] bg-[#EEF6FA] px-4 py-3 text-sm font-bold text-[#005B84]">
@@ -196,128 +250,72 @@ export function ClinicalHistory({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      <div className="ubu-card overflow-hidden">
-        <div className="border-b border-[#D7E3EC] p-4">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar por cédula, nombres, apellidos o número de historia clínica"
-            className={inputClass}
-          />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="ubu-table min-w-[1180px]">
-            <thead>
-              <tr>
-                <th>Paciente</th>
-                <th>Cédula</th>
-                <th>Historia clínica</th>
-                <th>Edad / sexo</th>
-                <th>Tipo de usuario</th>
-                <th>Apertura / Última atención</th>
-                <th>Estado HC</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ paciente, existsHc, fechaApertura, ultimaAtencion }) => (
-                <tr key={paciente.id}>
-                  <td className="font-black">
-                    <div>
-                      {paciente.apellidos} {paciente.nombres}
-                    </div>
-                    <div className="mt-1 max-w-[240px] text-xs font-semibold text-[#64748B]">
-                      {facultadDependencia(paciente)}
-                    </div>
-                  </td>
-                  <td className="text-[#64748B]">{paciente.cedula}</td>
-                  <td className="text-[#64748B]">{paciente.historiaClinicaNumero || paciente.cedula}</td>
-                  <td className="text-[#64748B]">
-                    {[paciente.edad, paciente.sexo].filter(Boolean).join(" / ") || "No registra"}
-                  </td>
-                  <td className="text-[#64748B]">
-                    {tipoUsuarioLabels[paciente.tipoUsuario] ?? "No registra"}
-                  </td>
-                  <td className="text-[#64748B]">
-                    <div>{fechaApertura || "Sin apertura"}</div>
-                    <div className="mt-1 text-xs">{ultimaAtencion || "Sin atenciones"}</div>
-                  </td>
-                  <td>
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-black ${
-                        existsHc ? "bg-[#DCFCE7] text-[#166534]" : "bg-[#FFE4E6] text-[#BE123C]"
-                      }`}
-                    >
-                      {existsHc ? "HC ABIERTA" : "SIN HISTORIA CLÍNICA"}
+      {!categoria && (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {(Object.keys(categoriaConfig) as CategoriaHc[]).map((key) => {
+            const config = categoriaConfig[key];
+            const filas = filasPorCategoria[key];
+            const abiertas = filas.filter((fila) => fila.existsHc).length;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => abrirCategoria(key)}
+                className="group flex min-h-[168px] flex-col overflow-hidden rounded-lg border border-[#D7E3EC] bg-white text-left shadow-[0_8px_22px_rgba(8,47,73,0.055)] transition hover:-translate-y-0.5 hover:border-[#BFD2DE] hover:shadow-[0_16px_30px_rgba(8,47,73,0.1)] focus:outline-none focus:ring-2 focus:ring-[#005B84]/20"
+              >
+                <div className="h-0.5 bg-[linear-gradient(90deg,#D71920_0%,#D71920_30%,#005B84_30%,#E5EEF4_30%,#E5EEF4_100%)]" />
+                <div className="flex flex-1 flex-col p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#EEF6FA] text-[#005B84] ring-1 ring-[#D7E3EC] transition group-hover:bg-[#005B84] group-hover:text-white">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                        aria-hidden
+                      >
+                        {categoriaIcons[key]}
+                      </svg>
                     </span>
-                  </td>
-                  <td>
-                    <div className="flex flex-wrap gap-2">
-                      {existsHc ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setDetailTarget(paciente)}
-                            className="ubu-btn ubu-btn-info ubu-btn-sm"
-                          >
-                            Abrir
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditTarget(paciente)}
-                            className="ubu-btn ubu-btn-secondary ubu-btn-sm"
-                          >
-                            Editar
-                          </button>
-                          {isAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => deleteHistoria(paciente)}
-                              className="ubu-btn ubu-btn-sm border border-[#FCA5A5] text-[#D71920] hover:bg-[#FEF2F2]"
-                            >
-                              Eliminar
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled
-                              title="Solo el administrador puede eliminar historias clínicas."
-                              className="ubu-btn ubu-btn-sm cursor-not-allowed border border-[#E2E8F0] text-[#94A3B8]"
-                            >
-                              Eliminar
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setAperturaTarget(paciente)}
-                          className="ubu-btn ubu-btn-primary ubu-btn-sm"
-                        >
-                          Aperturar historia clínica
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm font-bold text-[#64748B]">
-                    No se encontraron pacientes registrados para la búsqueda. Use “Añadir historia
-                    clínica” para registrar un nuevo paciente.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                    <span className="rounded bg-[#F5F8FB] px-2 py-0.5 text-[10px] font-bold text-[#062B49] ring-1 ring-[#D7E3EC]">
+                      {abiertas === 1 ? "1 HC abierta" : `${abiertas} HC abiertas`}
+                    </span>
+                  </div>
+                  <h2 className="mt-3 text-[15px] font-bold leading-snug text-[#082F49]">
+                    {config.titulo}
+                  </h2>
+                  <p className="mt-1.5 text-[13px] leading-5 text-[#64748B]">{config.descripcion}</p>
+                  <div className="mt-auto flex items-center justify-between pt-3">
+                    <span className="text-xs font-semibold text-[#64748B]">
+                      {filas.length === 1 ? "1 paciente registrado" : `${filas.length} pacientes registrados`}
+                    </span>
+                    <span className="text-xs font-bold text-[#005B84] transition group-hover:text-[#D71920]">
+                      Abrir
+                    </span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
-        {!isAdmin && (
-          <div className="border-t border-[#D7E3EC] bg-[#F8FBFD] px-4 py-2.5 text-xs font-semibold text-[#64748B]">
-            Solo el administrador puede eliminar historias clínicas.
-          </div>
-        )}
-      </div>
+      )}
+
+      {categoria && (
+        <ClinicalHistoryCategory
+          categoria={categoria}
+          rows={filasPorCategoria[categoria]}
+          isAdmin={isAdmin}
+          onVolver={volverATarjetas}
+          onNueva={nuevaHistoria}
+          onAbrir={abrirDetalle}
+          onEditar={editarHistoria}
+          onAperturar={aperturarHistoria}
+          onEliminar={eliminarHistoria}
+        />
+      )}
 
       {aperturaTarget && (
         <HistoriaClinicaModal
@@ -347,216 +345,8 @@ export function ClinicalHistory({ onBack }: { onBack: () => void }) {
         />
       )}
       {detailTarget && (
-        <HistoriaClinicaDetail paciente={detailTarget} onClose={() => setDetailTarget(undefined)} />
+        <ClinicalHistoryDetail paciente={detailTarget} onClose={() => setDetailTarget(undefined)} />
       )}
     </section>
-  );
-}
-
-function DetailInfo({ label, value }: { label: string; value?: string }) {
-  return (
-    <div className="rounded-md border border-[#D7E3EC] bg-[#F8FBFD] px-3 py-2">
-      <p className="text-[11px] font-semibold text-[#52677A]">{label}</p>
-      <p className="mt-1 text-sm font-medium text-[#0F2F44]">{value || "No registra"}</p>
-    </div>
-  );
-}
-
-function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-md border border-[#D7E3EC] p-4">
-      <h3 className="ubu-section-title">{title}</h3>
-      <div className="mt-3">{children}</div>
-    </section>
-  );
-}
-
-function HistoriaClinicaDetail({
-  paciente,
-  onClose,
-}: {
-  paciente: Paciente;
-  onClose: () => void;
-}) {
-  const historia: HistoriaClinica | undefined = obtenerHistoriaClinicaPorPaciente(paciente.id);
-  const atenciones: Atencion[] = obtenerAtencionesPorPaciente(paciente.id);
-  const gineco = historia?.antecedentesGinecoObstetricos;
-
-  return (
-    <Modal
-      size="xl"
-      title="Historia clínica"
-      subtitle={`${paciente.apellidos} ${paciente.nombres} · HC ${paciente.historiaClinicaNumero || paciente.cedula}`}
-      onClose={onClose}
-      footer={
-        <button type="button" onClick={onClose} className="ubu-btn ubu-btn-secondary">
-          Cerrar
-        </button>
-      }
-    >
-      <div className="space-y-4">
-        <DetailSection title="Datos personales">
-          <div className="grid gap-3 md:grid-cols-3">
-            <DetailInfo label="Cédula" value={paciente.cedula} />
-            <DetailInfo label="Fecha de nacimiento" value={paciente.fechaNacimiento} />
-            <DetailInfo label="Edad / sexo" value={[paciente.edad, paciente.sexo].filter(Boolean).join(" / ")} />
-            <DetailInfo label="Orientación sexual" value={paciente.orientacionSexual} />
-            <DetailInfo label="Pueblo o nacionalidad" value={paciente.puebloNacionalidad} />
-            <DetailInfo
-              label="Discapacidad"
-              value={
-                paciente.discapacidad === "Sí"
-                  ? [
-                      paciente.tipoDiscapacidad,
-                      paciente.porcentajeDiscapacidad ? `${paciente.porcentajeDiscapacidad}%` : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "Sí"
-                  : paciente.discapacidad
-              }
-            />
-            <DetailInfo label="Teléfono" value={paciente.telefono} />
-            <DetailInfo label="Correo institucional" value={paciente.correoInstitucional} />
-            <DetailInfo label="Dirección" value={paciente.direccion} />
-          </div>
-        </DetailSection>
-
-        <DetailSection title="Hábitos personales">
-          {historia ? (
-            <div className="grid gap-3 md:grid-cols-3">
-              <DetailInfo label="Alimentación" value={historia.habitosPersonales.alimentacion} />
-              <DetailInfo label="Alcohol" value={historia.habitosPersonales.alcohol} />
-              <DetailInfo label="Tabaco" value={historia.habitosPersonales.tabaco} />
-              <DetailInfo label="Otras sustancias" value={historia.habitosPersonales.otrasSustancias} />
-              <DetailInfo label="Medicación habitual" value={historia.habitosPersonales.medicacionHabitual} />
-              <DetailInfo label="Actividad física" value={historia.habitosPersonales.actividadFisica} />
-            </div>
-          ) : (
-            <p className="text-sm font-semibold text-[#64748B]">Sin registro de hábitos.</p>
-          )}
-        </DetailSection>
-
-        <DetailSection title="Antecedentes">
-          {historia ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              <DetailInfo
-                label="Antecedentes personales"
-                value={
-                  historia.antecedentesPersonales.length
-                    ? historia.antecedentesPersonales
-                        .map((item) => `${item.codigo} - ${item.descripcion}`)
-                        .join("; ")
-                    : historia.antecedentesPersonalesObservacion
-                }
-              />
-              <DetailInfo
-                label="Antecedentes familiares"
-                value={
-                  historia.antecedentesFamiliares.length
-                    ? historia.antecedentesFamiliares
-                        .map((item) => `${item.familiar}: ${item.codigo} - ${item.descripcion}`)
-                        .join("; ")
-                    : historia.antecedentesFamiliaresObservacion
-                }
-              />
-              <DetailInfo label="Antecedentes quirúrgicos" value={historia.antecedentesQuirurgicos} />
-              <DetailInfo label="Alergias" value={historia.alergias} />
-            </div>
-          ) : (
-            <p className="text-sm font-semibold text-[#64748B]">Sin antecedentes registrados.</p>
-          )}
-        </DetailSection>
-
-        {gineco && (
-          <DetailSection title="Antecedentes gineco-obstétricos">
-            <div className="grid gap-3 md:grid-cols-3">
-              <DetailInfo label="Menarquia" value={gineco.menarquia} />
-              <DetailInfo label="Ciclo menstrual" value={gineco.cicloMenstrual} />
-              <DetailInfo
-                label="G / P / C / A / HV"
-                value={`G${gineco.gestas ?? 0} P${gineco.partos ?? 0} C${gineco.cesareas ?? 0} A${gineco.abortos ?? 0} HV${gineco.hijosVivos ?? 0}`}
-              />
-              <DetailInfo label="Método anticonceptivo" value={gineco.metodoAnticonceptivo} />
-              <DetailInfo
-                label="Gestación actual"
-                value={
-                  gineco.gestaActual === "Sí"
-                    ? [
-                        "Sí",
-                        formatearEdadGestacional(
-                          gineco.edadGestacionalSemanas,
-                          gineco.edadGestacionalDias,
-                        ),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")
-                    : gineco.gestaActual
-                }
-              />
-              <DetailInfo
-                label="Lactancia"
-                value={
-                  gineco.lactanciaActual === "Sí"
-                    ? ["Sí", gineco.tipoLactancia].filter(Boolean).join(" · ")
-                    : gineco.lactanciaActual
-                }
-              />
-              <DetailInfo label="Observaciones" value={gineco.observacionesGinecoObstetricas} />
-            </div>
-          </DetailSection>
-        )}
-
-        <DetailSection title="Historial de atenciones">
-          {atenciones.length ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                <thead className="bg-[#EEF6FA] text-[11px] uppercase tracking-wide text-[#64748B]">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Fecha</th>
-                    <th className="px-3 py-2 font-semibold">Diagnóstico principal</th>
-                    <th className="px-3 py-2 font-semibold">Motivo</th>
-                    <th className="px-3 py-2 font-semibold">Signos vitales</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#D7E3EC]">
-                  {atenciones.map((atencion) => (
-                    <tr key={atencion.id} className="text-[#0F2F44]">
-                      <td className="px-3 py-2">
-                        {(atencion.fechaAtencion || atencion.fechaInicio).slice(0, 10)}
-                      </td>
-                      <td className="px-3 py-2 text-[#52677A]">
-                        {atencion.diagnosticoPrincipal
-                          ? `${atencion.diagnosticoPrincipal.codigo} ${atencion.diagnosticoPrincipal.descripcion}`
-                          : "No registra"}
-                      </td>
-                      <td className="px-3 py-2 text-[#52677A]">{atencion.motivoConsulta || "No registra"}</td>
-                      <td className="px-3 py-2 text-[#52677A]">
-                        {atencion.signosVitales
-                          ? [
-                              atencion.signosVitales.presionArterial &&
-                                `PA ${atencion.signosVitales.presionArterial} mmHg`,
-                              atencion.signosVitales.temperatura &&
-                                `T° ${atencion.signosVitales.temperatura} °C`,
-                              atencion.signosVitales.talla &&
-                                `Talla ${normalizarTallaCm(atencion.signosVitales.talla)} cm`,
-                              atencion.signosVitales.peso && `Peso ${atencion.signosVitales.peso} kg`,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ") || "No registra"
-                          : "No registra"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-sm font-semibold text-[#64748B]">
-              Sin atenciones finalizadas. Las atenciones se inician desde “Atenciones pendientes”.
-            </p>
-          )}
-        </DetailSection>
-      </div>
-    </Modal>
   );
 }

@@ -11,6 +11,8 @@ type ModalProps = {
   subtitle?: React.ReactNode;
   size?: ModalSize;
   onClose: () => void;
+  /** Fila sólida (tabs/pasos) integrada entre el encabezado y el cuerpo. */
+  subheader?: React.ReactNode;
   footer?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
@@ -39,6 +41,7 @@ export function Modal({
   subtitle,
   size = "md",
   onClose,
+  subheader,
   footer,
   children,
   className = "",
@@ -70,6 +73,7 @@ export function Modal({
             X
           </button>
         </div>
+        {subheader && <div className="ubu-modal-subheader">{subheader}</div>}
         <div className={`ubu-modal-body text-sm ${bodyClassName}`}>{children}</div>
         {footer && <div className="ubu-modal-footer">{footer}</div>}
       </div>
