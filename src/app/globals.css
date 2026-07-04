@@ -274,6 +274,65 @@ textarea {
   padding: 16px 28px;
 }
 
+/* Barra de pasos del modal: bloque único y sólido pegado al encabezado.
+   El margen negativo anula el padding del cuerpo para que la barra ocupe
+   todo el ancho y el contenido nunca se vea entre los pasos al hacer scroll. */
+.ubu-modal-stepbar {
+  position: sticky;
+  top: 0;
+  /* Por debajo de los dropdowns de autocompletado (z-30) para no taparlos. */
+  z-index: 20;
+  margin: -24px -28px 20px;
+  padding: 12px 28px;
+  background: #fff;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ubu-modal-stepbar-track {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: #f8fbfd;
+  scrollbar-width: thin;
+}
+
+.ubu-modal-step {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 14px;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.ubu-modal-step + .ubu-modal-step {
+  border-left: 1px solid var(--border-soft);
+}
+
+.ubu-modal-step:hover {
+  background: #eef6fa;
+  color: var(--institutional-blue);
+}
+
+.ubu-modal-step.is-active {
+  background: var(--institutional-blue);
+  color: #fff;
+}
+
 .ubu-modal-close {
   display: inline-flex;
   height: 36px;
@@ -376,6 +435,13 @@ textarea {
     padding-right: 16px;
   }
 
+  .ubu-modal-stepbar {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
   .ubu-modal-header {
     padding-top: 16px;
     padding-bottom: 16px;
@@ -430,6 +496,29 @@ body.modal-open {
 .triage-pulse-verde,
 .triage-pulse-azul {
   animation: triage-pulse-suave 1650ms ease-in-out infinite;
+}
+
+/* Titileo de fila completa según nivel de triaje: fondos translúcidos suaves
+   para no comprometer la lectura. La animación de background-color tiene
+   prioridad sobre el hover y sobre filas alternadas de .ubu-table. */
+.triage-row-rojo {
+  animation: triage-row-rojo 900ms ease-in-out infinite;
+}
+
+.triage-row-naranja {
+  animation: triage-row-naranja 1200ms ease-in-out infinite;
+}
+
+.triage-row-amarillo {
+  animation: triage-row-amarillo 1600ms ease-in-out infinite;
+}
+
+.triage-row-verde {
+  animation: triage-row-verde 2000ms ease-in-out infinite;
+}
+
+.triage-row-azul {
+  animation: triage-row-azul 2400ms ease-in-out infinite;
 }
 
 .dashboard-card:nth-child(2) {
@@ -538,6 +627,56 @@ body.modal-open {
   50% {
     box-shadow: 0 0 0 5px rgb(234 179 8 / 0);
     transform: scale(1.025);
+  }
+}
+
+@keyframes triage-row-rojo {
+  0%,
+  100% {
+    background-color: rgb(220 38 38 / 0.07);
+  }
+  50% {
+    background-color: rgb(220 38 38 / 0.2);
+  }
+}
+
+@keyframes triage-row-naranja {
+  0%,
+  100% {
+    background-color: rgb(249 115 22 / 0.06);
+  }
+  50% {
+    background-color: rgb(249 115 22 / 0.17);
+  }
+}
+
+@keyframes triage-row-amarillo {
+  0%,
+  100% {
+    background-color: rgb(234 179 8 / 0.06);
+  }
+  50% {
+    background-color: rgb(234 179 8 / 0.16);
+  }
+}
+
+@keyframes triage-row-verde {
+  0%,
+  100% {
+    background-color: rgb(22 163 74 / 0.05);
+  }
+  50% {
+    background-color: rgb(22 163 74 / 0.13);
+  }
+}
+
+@keyframes triage-row-azul {
+  0%,
+  100% {
+    background-color: rgb(37 99 235 / 0.05);
+  }
+  50% {
+    background-color: rgb(37 99 235 / 0.12);
   }
 }
 

@@ -187,6 +187,29 @@ export function guardarHistoriaClinicaInicial({
   return { paciente: savedPaciente, historia: nuevaHistoria, created: true };
 }
 
+// Borrado total del contenido de una historia clínica. La UI solo lo expone
+// al rol administrador: elimina el expediente y las atenciones del paciente,
+// pero conserva el registro del paciente para permitir una nueva apertura.
+export function eliminarHistoriaClinicaCompleta(pacienteId: string) {
+  const paciente = obtenerPacientes().find((item) => item.id === pacienteId);
+  const cedula = paciente?.cedula?.trim().toLowerCase();
+  writeStorage(
+    HISTORIAS_KEY,
+    obtenerHistoriasClinicas().filter(
+      (historia) =>
+        historia.pacienteId !== pacienteId &&
+        (!cedula || historia.numeroHistoriaClinica.trim().toLowerCase() !== cedula),
+    ),
+  );
+  writeStorage(
+    ATENCIONES_KEY,
+    obtenerAtenciones().filter((atencion) => atencion.pacienteId !== pacienteId),
+  );
+  if (paciente) {
+    actualizarPaciente(pacienteId, { fechaAperturaHistoriaClinica: undefined });
+  }
+}
+
 export function actualizarPaciente(id: string, changes: Partial<Paciente>) {
   const pacientes = obtenerPacientes();
   const normalizedChanges = normalizePacienteHistoriaClinica(changes);

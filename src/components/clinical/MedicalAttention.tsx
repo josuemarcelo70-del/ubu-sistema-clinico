@@ -21,6 +21,13 @@ import {
   tieneDatosGineco,
 } from "@/lib/gineco";
 import { mockUsers, SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
+import {
+  calcularImcDesdeCm,
+  limpiarValorNumerico,
+  normalizarTallaCm,
+  tallaFueraDeRango,
+  vitalFieldDefs,
+} from "@/lib/vital-signs";
 import type {
   CertificadoMedico,
   CoberturaAtencion,
@@ -164,29 +171,12 @@ function patientPeriod(paciente?: Paciente) {
   return "No aplica";
 }
 
-function classifyImc(imc: number) {
-  if (imc < 18.5) return "Bajo peso";
-  if (imc < 25) return "Normal";
-  if (imc < 30) return "Sobrepeso";
-  if (imc < 35) return "Obesidad grado I";
-  if (imc < 40) return "Obesidad grado II";
-  return "Obesidad grado III";
-}
-
-function calculateImc(peso: string, talla: string) {
-  const kg = Number(String(peso).replace(",", "."));
-  const rawTalla = Number(String(talla).replace(",", "."));
-  const meters = rawTalla > 3 ? rawTalla / 100 : rawTalla;
-  if (!kg || !meters) return { imc: "", clasificacionImc: "" };
-  const value = kg / (meters * meters);
-  if (!Number.isFinite(value)) return { imc: "", clasificacionImc: "" };
-  const imc = value.toFixed(1);
-  return { imc, clasificacionImc: classifyImc(Number(imc)) };
-}
-
 function makeVitalsDraft(signos?: SignosVitales): VitalSignsDraft {
   const draft = { ...emptyVitals, ...(signos ?? {}) };
-  const calculated = calculateImc(draft.peso, draft.talla);
+  // Los registros antiguos pueden traer la talla en metros: se normaliza a cm
+  // una sola vez al cargar el borrador para evitar conversiones duplicadas.
+  draft.talla = normalizarTallaCm(draft.talla);
+  const calculated = calcularImcDesdeCm(draft.peso, draft.talla);
   return { ...draft, ...calculated };
 }
 
@@ -872,7 +862,7 @@ export function MedicalAttention({
   function changeVital(key: keyof VitalSignsDraft, value: string) {
     setVitals((current) => {
       const next = { ...current, [key]: value };
-      if (key === "peso" || key === "talla") return { ...next, ...calculateImc(next.peso, next.talla) };
+      if (key === "peso" || key === "talla") return { ...next, ...calcularImcDesdeCm(next.peso, next.talla) };
       return next;
     });
   }
@@ -1073,6 +1063,13 @@ export function MedicalAttention({
         origen: derivacion.origen,
         signosVitales: {
           ...vitals,
+          // Solo datos limpios: números sin unidades y talla siempre en cm.
+          frecuenciaCardiaca: limpiarValorNumerico(vitals.frecuenciaCardiaca),
+          frecuenciaRespiratoria: limpiarValorNumerico(vitals.frecuenciaRespiratoria),
+          temperatura: limpiarValorNumerico(vitals.temperatura),
+          saturacionOxigeno: limpiarValorNumerico(vitals.saturacionOxigeno),
+          peso: limpiarValorNumerico(vitals.peso),
+          talla: normalizarTallaCm(vitals.talla),
           id: signos?.id || createId("sv-atencion"),
           pacienteId: paciente.id,
           fecha: signos?.fecha || now,
@@ -1157,8 +1154,8 @@ export function MedicalAttention({
           </>
         }
       >
-          <div className="sticky top-0 z-10 -mx-2 overflow-x-auto border-b border-[#D7E3EC] bg-[#F6FAFD]/95 px-2 pb-3 pt-1 backdrop-blur">
-            <div className="flex min-w-max gap-2">
+          <div className="ubu-modal-stepbar">
+            <div className="ubu-modal-stepbar-track">
               {[
                 ["Paciente", "attn-paciente"],
                 ["Signos vitales", "attn-vitales"],
@@ -1176,7 +1173,7 @@ export function MedicalAttention({
                   key={sectionId}
                   type="button"
                   onClick={() => document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                  className="rounded-full border border-[#D7E3EC] bg-white px-3 py-1.5 text-xs font-bold text-[#0F2F44] transition hover:border-[#005B84] hover:text-[#005B84]"
+                  className="ubu-modal-step"
                 >
                   {label}
                 </button>
@@ -1223,21 +1220,24 @@ export function MedicalAttention({
 
           <Section id="attn-vitales" title="Signos vitales">
             <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-              {[
-                ["Presion arterial", "presionArterial"],
-                ["Frecuencia cardiaca", "frecuenciaCardiaca"],
-                ["Frecuencia respiratoria", "frecuenciaRespiratoria"],
-                ["Temperatura", "temperatura"],
-                ["Saturacion O2", "saturacionOxigeno"],
-                ["Talla en metros", "talla"],
-                ["Peso kg", "peso"],
-              ].map(([label, key]) => (
+              {vitalFieldDefs.map(({ key, label, placeholder, inputMode }) => (
                 <Field key={key} label={label}>
-                  <input value={vitals[key as keyof VitalSignsDraft] ?? ""} onChange={(event) => changeVital(key as keyof VitalSignsDraft, event.target.value)} className={inputClass} />
+                  <input
+                    inputMode={inputMode}
+                    placeholder={placeholder}
+                    value={vitals[key as keyof VitalSignsDraft] ?? ""}
+                    onChange={(event) => changeVital(key as keyof VitalSignsDraft, event.target.value)}
+                    className={inputClass}
+                  />
+                  {key === "talla" && tallaFueraDeRango(normalizarTallaCm(vitals.talla)) && (
+                    <span className="mt-1 block text-xs font-semibold normal-case text-[#B45309]">
+                      Registre la talla en cm (50–250); el IMC no se calculará.
+                    </span>
+                  )}
                 </Field>
               ))}
-              <MiniInfo label="IMC" value={vitals.imc} />
-              <MiniInfo label="Clasificación IMC" value={vitals.clasificacionImc} />
+              <MiniInfo label="IMC (kg/m²)" value={vitals.imc || "No registra"} />
+              <MiniInfo label="Clasificación IMC" value={vitals.clasificacionImc || "No registra"} />
               <Field label="Observaciones">
                 <textarea value={vitals.observaciones} onChange={(event) => changeVital("observaciones", event.target.value)} className={`${inputClass} min-h-20`} />
               </Field>

@@ -333,7 +333,8 @@ export function GinecoObstetricosStep({
 
       <div className="rounded-md border border-[#D7E3EC] p-4">
         <h3 className="text-sm font-semibold text-[#0F2F44]">Antecedentes obstétricos</h3>
-        <div className="mt-3 grid grid-cols-2 gap-x-[18px] gap-y-4 md:grid-cols-3 xl:grid-cols-5">
+        {/* Máximo 3 columnas para que ningún campo se corte dentro del modal. */}
+        <div className="mt-3 grid min-w-0 grid-cols-1 gap-x-[18px] gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
           {(
             [
               ["Gestas", "gestas"],

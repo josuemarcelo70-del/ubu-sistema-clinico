@@ -21,7 +21,7 @@ type FieldProps = {
 
 export function Field({ label, children }: FieldProps) {
   return (
-    <label className="space-y-1.5 text-[13px] font-semibold text-[#34495C]">
+    <label className="block min-w-0 space-y-1.5 text-[13px] font-semibold text-[#34495C]">
       <span>
         {label}
       </span>

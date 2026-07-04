@@ -12,6 +12,13 @@ import {
   obtenerPacientes,
 } from "@/lib/clinical-storage";
 import { SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
+import {
+  calcularImcDesdeCm,
+  limpiarValorNumerico,
+  normalizarTallaCm,
+  tallaFueraDeRango,
+  vitalFieldDefs,
+} from "@/lib/vital-signs";
 import type { Derivacion, Paciente, PrioridadTriaje, ServicioDestino } from "@/types/clinical";
 import { DynamicAcademicFields, Field, inputClass, selectClass } from "./ClinicalFormFields";
 import { TriageSelect } from "./TriageBadge";
@@ -65,13 +72,6 @@ function calculateAgeFromBirthDate(value: string) {
   return String(Math.max(years, 0));
 }
 
-function calculateImc(peso: string, talla: string) {
-  const kg = Number(String(peso).replace(",", "."));
-  const rawTalla = Number(String(talla).replace(",", "."));
-  const meters = rawTalla > 3 ? rawTalla / 100 : rawTalla;
-  if (!kg || !meters) return "";
-  return (kg / (meters * meters)).toFixed(1);
-}
 
 export function TriageFlow({ onBack }: { onBack: () => void }) {
   const [search, setSearch] = useState("");
@@ -102,7 +102,8 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
       .slice(0, 6);
   }, [search, message]);
 
-  const imc = calculateImc(signos.peso, signos.talla);
+  const { imc, clasificacionImc } = calcularImcDesdeCm(signos.peso, signos.talla);
+  const tallaInvalida = tallaFueraDeRango(normalizarTallaCm(signos.talla));
 
   function fillPaciente(row: Paciente) {
     setPaciente(row);
@@ -121,6 +122,15 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
   function saveTriage() {
     if (!paciente.cedula || !paciente.nombres || !paciente.apellidos || !motivo) {
       setMessage("Complete cédula, apellidos, nombres y motivo de consulta.");
+      return;
+    }
+    const saturacion = Number(limpiarValorNumerico(signos.saturacionOxigeno));
+    if (signos.saturacionOxigeno.trim() && (!Number.isFinite(saturacion) || saturacion < 0 || saturacion > 100)) {
+      setMessage("La saturación O₂ debe estar entre 0 y 100 %.");
+      return;
+    }
+    if (tallaInvalida) {
+      setMessage("La talla debe registrarse en centímetros, entre 50 y 250 cm.");
       return;
     }
 
@@ -147,17 +157,18 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
       fechaActualizacion: now.toISOString(),
     } as Paciente);
 
+    // Se guardan solo los datos limpios: números sin unidades y talla en cm.
     const savedSignos = guardarSignosVitales({
       id: createId("sv"),
       pacienteId: savedPaciente.id,
       fecha: now.toISOString(),
-      presionArterial: signos.presionArterial,
-      frecuenciaCardiaca: signos.frecuenciaCardiaca,
-      frecuenciaRespiratoria: signos.frecuenciaRespiratoria,
-      temperatura: signos.temperatura,
-      saturacionOxigeno: signos.saturacionOxigeno,
-      peso: signos.peso,
-      talla: signos.talla,
+      presionArterial: signos.presionArterial.trim(),
+      frecuenciaCardiaca: limpiarValorNumerico(signos.frecuenciaCardiaca),
+      frecuenciaRespiratoria: limpiarValorNumerico(signos.frecuenciaRespiratoria),
+      temperatura: limpiarValorNumerico(signos.temperatura),
+      saturacionOxigeno: limpiarValorNumerico(signos.saturacionOxigeno),
+      peso: limpiarValorNumerico(signos.peso),
+      talla: normalizarTallaCm(signos.talla),
       imc,
       observaciones: signos.observaciones,
       registradoPorUserId: currentUserId(),
@@ -353,17 +364,11 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
           <div className="rounded-lg border border-[#D7E3EC] bg-[#F8FBFD] p-3">
             <h3 className="text-sm font-black text-[#082F49]">Signos vitales</h3>
             <div className="mt-3 grid gap-3">
-              {[
-                ["Presión arterial", "presionArterial"],
-                ["Frecuencia cardíaca", "frecuenciaCardiaca"],
-                ["Frecuencia respiratoria", "frecuenciaRespiratoria"],
-                ["Temperatura", "temperatura"],
-                ["Saturación O2", "saturacionOxigeno"],
-                ["Peso kg", "peso"],
-                ["Talla cm", "talla"],
-              ].map(([label, key]) => (
+              {vitalFieldDefs.map(({ key, label, placeholder, inputMode }) => (
                 <Field key={key} label={label}>
                   <input
+                    inputMode={inputMode}
+                    placeholder={placeholder}
                     value={signos[key as keyof typeof signos]}
                     onChange={(event) =>
                       setSignos((row) => ({ ...row, [key]: event.target.value }))
@@ -372,8 +377,16 @@ export function TriageFlow({ onBack }: { onBack: () => void }) {
                   />
                 </Field>
               ))}
+              {tallaInvalida && (
+                <p className="text-xs font-semibold text-[#B45309]">
+                  La talla debe estar entre 50 y 250 cm; el IMC no se calculará.
+                </p>
+              )}
               <div className="rounded-md border border-[#D7E3EC] bg-white px-3 py-2 text-sm font-black text-[#082F49]">
-                IMC: {imc || "Pendiente"}
+                IMC (kg/m²): {imc || "No registra"}
+                <span className="mt-0.5 block text-xs font-bold text-[#52677A]">
+                  Clasificación: {clasificacionImc || "No registra"}
+                </span>
               </div>
               <Field label="Nota de enfermería">
                 <textarea

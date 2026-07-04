@@ -6,13 +6,13 @@ export const roleRoutes: Record<Role, RoleRouteConfig> = {
     label: "Medicina",
     path: "/medicina",
     navItems: [
-      { label: "Atenciones pendientes", href: "/medicina" },
-      { label: "Pacientes", href: "/medicina" },
-      { label: "Historia clínica", href: "/medicina" },
-      { label: "Certificados", href: "/medicina" },
-      { label: "Solicitudes de laboratorio", href: "/medicina" },
-      { label: "Prescripciones", href: "/medicina" },
-      { label: "Informe mensual", href: "/medicina" },
+      { label: "Inicio", href: "/medicina" },
+      { label: "Atenciones pendientes", href: "/medicina/atenciones-pendientes" },
+      { label: "Historia clínica", href: "/medicina/historia-clinica" },
+      { label: "Certificados", href: "/medicina/certificados" },
+      { label: "Solicitudes de laboratorio", href: "/medicina/solicitudes-laboratorio" },
+      { label: "Prescripciones", href: "/medicina/prescripciones" },
+      { label: "Informe mensual", href: "/medicina/informe-mensual" },
     ],
   },
   enfermeria: {
@@ -97,5 +97,8 @@ export const loginRedirectByRole = Object.fromEntries(
 ) as Record<Role, string>;
 
 export const allowedRoutesByRole = Object.fromEntries(
-  Object.values(roleRoutes).map(({ role, path }) => [role, [path, "/perfil"]]),
+  Object.values(roleRoutes).map(({ role, path, navItems }) => [
+    role,
+    [path, ...navItems.map((item) => item.href), "/perfil"],
+  ]),
 ) as Record<Role, string[]>;

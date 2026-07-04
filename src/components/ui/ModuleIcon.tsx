@@ -80,7 +80,7 @@ function iconKey(label: string): keyof typeof iconPaths {
   if (normalized.includes("certificado") || normalized.includes("plantilla")) return "seal";
   if (normalized.includes("historia") || normalized.includes("sesion") || normalized.includes("catálogo") || normalized.includes("catalogo")) return "document";
   if (normalized.includes("config") || normalized.includes("rol")) return "settings";
-  if (normalized.includes("inicio")) return "home";
+  if (normalized === "atenciones" || normalized.includes("inicio")) return "home";
 
   return "list";
 }

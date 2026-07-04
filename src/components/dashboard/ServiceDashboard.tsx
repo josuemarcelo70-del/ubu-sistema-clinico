@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { CatalogAdmin } from "@/components/admin/CatalogAdmin";
-import { MedicineQueue } from "@/components/clinical/MedicineQueue";
 import { TriageFlow } from "@/components/clinical/TriageFlow";
 import { AppShell } from "@/components/layout/AppShell";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
@@ -18,9 +17,9 @@ type ServiceDashboardProps = {
 };
 
 const navDescriptions: Record<string, string> = {
-  "Atenciones pendientes": "Pacientes derivados para atención.",
-  Pacientes: "Registro y búsqueda de pacientes.",
-  "Historia clínica": "Archivo clínico del paciente.",
+  Inicio: "Panel general del área médica.",
+  "Atenciones pendientes": "Pacientes derivados para atención médica.",
+  "Historia clínica": "Búsqueda, apertura y seguimiento de historias clínicas.",
   Certificados: "Emisión de certificados.",
   "Solicitudes de laboratorio": "Órdenes y resultados.",
   Prescripciones: "Medicamentos indicados.",
@@ -75,17 +74,14 @@ const serviceSubtitles: Record<Role, string> = {
 
 export function ServiceDashboard({ role }: ServiceDashboardProps) {
   const routeConfig = roleRoutes[role];
-  const [activeView, setActiveView] = useState<
-    "dashboard" | "medicina-pendientes" | "triaje" | "catalogos"
-  >("dashboard");
-
-  if (role === "medicina" && activeView === "medicina-pendientes") {
-    return (
-      <AppShell role={role}>
-        <MedicineQueue onBack={() => setActiveView("dashboard")} />
-      </AppShell>
-    );
-  }
+  // Las tarjetas del dashboard no incluyen la entrada que apunta al propio
+  // dashboard (p. ej. "Inicio" en Medicina): solo módulos internos.
+  const dashboardItems = routeConfig.navItems.filter(
+    (item) => item.href !== routeConfig.path,
+  );
+  const [activeView, setActiveView] = useState<"dashboard" | "triaje" | "catalogos">(
+    "dashboard",
+  );
 
   if (role === "enfermeria" && activeView === "triaje") {
     return (
@@ -104,10 +100,6 @@ export function ServiceDashboard({ role }: ServiceDashboardProps) {
   }
 
   function openDashboardItem(label: string) {
-    if (role === "medicina" && label === "Atenciones pendientes") {
-      setActiveView("medicina-pendientes");
-      return;
-    }
     if (role === "enfermeria" && label === "Triaje") {
       setActiveView("triaje");
       return;
@@ -144,7 +136,7 @@ export function ServiceDashboard({ role }: ServiceDashboardProps) {
                   </p>
                 </div>
                 <div className="w-fit border border-white/18 bg-white/12 px-3 py-2 text-sm font-semibold text-white backdrop-blur">
-                  {routeConfig.navItems.length} áreas disponibles
+                  {dashboardItems.length} áreas disponibles
                 </div>
               </div>
             </div>
@@ -152,9 +144,8 @@ export function ServiceDashboard({ role }: ServiceDashboardProps) {
         </div>
 
         <div className="grid auto-rows-fr gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {routeConfig.navItems.map((item, index) => {
+          {dashboardItems.map((item, index) => {
             const isFunctional =
-              (role === "medicina" && item.label === "Atenciones pendientes") ||
               (role === "enfermeria" && item.label === "Triaje") ||
               (role === "admin" && item.label === "Catálogos");
             const cardContent = (

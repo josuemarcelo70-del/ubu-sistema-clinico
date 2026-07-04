@@ -15,10 +15,12 @@ import {
   guardarPaciente,
   hasHistoriaClinica,
   iniciarAtencionDesdeDerivacion,
+  normalizeTriaje,
   obtenerAtenciones,
   obtenerAtencionEnProcesoPorDerivacion,
   obtenerDerivacionesActivasPorServicio,
   obtenerDerivacionesPendientesPorServicio,
+  obtenerHistoriaClinicaPorPaciente,
   obtenerPacientes,
   obtenerSignosPorId,
 } from "@/lib/clinical-storage";
@@ -34,6 +36,7 @@ import {
   tipoDiscapacidadOptions,
 } from "@/lib/gineco";
 import { SIMULATED_SESSION_KEY, type SimulatedSession } from "@/lib/mock-users";
+import { normalizarTallaCm } from "@/lib/vital-signs";
 import type {
   Atencion,
   AntecedenteFamiliar,
@@ -133,6 +136,9 @@ function calculateAgeFromBirthDate(value: string) {
 export function MedicineQueue({ onBack }: { onBack: () => void }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [query, setQuery] = useState("");
+  const [filterPrioridad, setFilterPrioridad] = useState<"" | PrioridadTriaje>("");
+  const [filterEstado, setFilterEstado] = useState<"" | "pendiente" | "en_atencion">("");
+  const [filterFecha, setFilterFecha] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<SignosVitales | undefined>();
   const [hcTarget, setHcTarget] = useState<QueueRow | undefined>();
@@ -162,6 +168,9 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
         };
       })
       .filter((row) => {
+        if (filterPrioridad && row.derivacion.prioridadTriaje !== filterPrioridad) return false;
+        if (filterEstado && row.derivacion.estado !== filterEstado) return false;
+        if (filterFecha && row.derivacion.fechaDerivacion.slice(0, 10) !== filterFecha) return false;
         if (!term) return true;
         const paciente = row.paciente;
         return [
@@ -186,7 +195,7 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
         if (priority !== 0) return priority;
         return a.derivacion.fechaDerivacion.localeCompare(b.derivacion.fechaDerivacion);
       });
-  }, [query, refreshKey]);
+  }, [filterEstado, filterFecha, filterPrioridad, query, refreshKey]);
 
   function startAttention(row: QueueRow, tipo: "apertura_hc" | "subsecuente") {
     const enProceso = obtenerAtencionEnProcesoPorDerivacion(row.derivacion.id);
@@ -226,7 +235,10 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
             <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#005B84]">
               Medicina general
             </p>
-            <h1 className="mt-1 text-2xl font-black text-[#082F49]">Pacientes en espera</h1>
+            <h1 className="mt-1 text-2xl font-black text-[#082F49]">Atenciones pendientes</h1>
+            <p className="mt-1 text-sm font-semibold text-[#64748B]">
+              Pacientes derivados para atención médica
+            </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
@@ -235,6 +247,13 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
               className="rounded-md border border-[#D7E3EC] px-3 py-2 text-sm font-bold text-[#082F49] transition hover:border-[#005B84] hover:text-[#005B84]"
             >
               Volver
+            </button>
+            <button
+              type="button"
+              onClick={() => setRefreshKey((value) => value + 1)}
+              className="rounded-md border border-[#D7E3EC] px-3 py-2 text-sm font-bold text-[#005B84] transition hover:border-[#005B84]"
+            >
+              Actualizar
             </button>
             <button
               type="button"
@@ -275,13 +294,48 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
       </div>
 
       {activeTab === "espera" && <div className="ubu-card overflow-hidden">
-        <div className="border-b border-[#D7E3EC] p-4">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar por nombres, cédula, HC, carrera, facultad o motivo"
-            className={inputClass}
-          />
+        <div className="grid gap-3 border-b border-[#D7E3EC] p-4 lg:grid-cols-[1fr_180px_170px_170px]">
+          <Field label="Buscar">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Cédula, nombres, HC, carrera o motivo"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Prioridad / triaje">
+            <select
+              value={filterPrioridad}
+              onChange={(event) => setFilterPrioridad(event.target.value as "" | PrioridadTriaje)}
+              className={selectClass}
+            >
+              <option value="">Todas</option>
+              <option value="rojo">Rojo - Emergencia</option>
+              <option value="naranja">Naranja - Muy urgente</option>
+              <option value="amarillo">Amarillo - Urgente</option>
+              <option value="verde">Verde - Menor urgencia</option>
+              <option value="azul">Azul - No urgente</option>
+            </select>
+          </Field>
+          <Field label="Estado">
+            <select
+              value={filterEstado}
+              onChange={(event) => setFilterEstado(event.target.value as "" | "pendiente" | "en_atencion")}
+              className={selectClass}
+            >
+              <option value="">Todos</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="en_atencion">En atención</option>
+            </select>
+          </Field>
+          <Field label="Fecha de derivación">
+            <input
+              type="date"
+              value={filterFecha}
+              onChange={(event) => setFilterFecha(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
         </div>
         <div className="overflow-x-auto">
           <table className="ubu-table min-w-[1120px]">
@@ -305,7 +359,10 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
                 const enProceso = obtenerAtencionEnProcesoPorDerivacion(row.derivacion.id);
                 const enAtencion = row.derivacion.estado === "en_atencion";
                 return (
-                  <tr key={row.derivacion.id} className={row.derivacion.prioridadTriaje === "rojo" || row.derivacion.prioridadTriaje === "naranja" ? "bg-[#FFF7F7]" : ""}>
+                  <tr
+                    key={row.derivacion.id}
+                    className={`triage-row-${normalizeTriaje(row.derivacion.prioridadTriaje)}`}
+                  >
                     <td>
                       <TriageBadge value={row.derivacion.prioridadTriaje} />
                     </td>
@@ -383,7 +440,7 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-8 text-center text-sm font-bold text-[#64748B]">
-                    No hay pacientes pendientes para Medicina.
+                    No existen pacientes pendientes de atención médica.
                   </td>
                 </tr>
               )}
@@ -405,13 +462,17 @@ export function MedicineQueue({ onBack }: { onBack: () => void }) {
         />
       )}
       {vitalSigns && <VitalSignsModal signos={vitalSigns} onClose={() => setVitalSigns(undefined)} />}
-      {hcTarget && (
+      {hcTarget?.paciente && (
         <HistoriaClinicaModal
-          row={hcTarget}
+          paciente={hcTarget.paciente}
+          derivacion={hcTarget.derivacion}
           onClose={() => setHcTarget(undefined)}
-          onSaved={(row) => {
+          onSaved={({ paciente, derivacion }) => {
             setHcTarget(undefined);
-            startAttention(row, "apertura_hc");
+            startAttention(
+              { ...hcTarget, paciente, derivacion: derivacion ?? hcTarget.derivacion },
+              "apertura_hc",
+            );
             setRefreshKey((value) => value + 1);
           }}
         />
@@ -654,19 +715,31 @@ function AddPatientModal({
   );
 }
 
-function HistoriaClinicaModal({
-  row,
+// Modal de apertura y edición de historia clínica. Se usa desde la bandeja de
+// atenciones pendientes (con derivación) y desde el módulo Historia clínica
+// (sin derivación), por eso la derivación es opcional. En modo "edicion" se
+// precargan los datos de la historia existente y guardar actualiza campos sin
+// borrar el expediente.
+export function HistoriaClinicaModal({
+  paciente: pacienteBase,
+  derivacion,
+  mode = "apertura",
   onClose,
   onSaved,
 }: {
-  row: QueueRow;
+  paciente: Paciente;
+  derivacion?: Derivacion;
+  mode?: "apertura" | "edicion";
   onClose: () => void;
-  onSaved: (row: QueueRow) => void;
+  onSaved: (result: { paciente: Paciente; derivacion?: Derivacion }) => void;
 }) {
-  const initialHc = row.paciente?.cedula?.trim() ?? "";
+  const [historiaExistente] = useState(() =>
+    mode === "edicion" ? obtenerHistoriaClinicaPorPaciente(pacienteBase.id) : undefined,
+  );
+  const initialHc = pacienteBase.cedula?.trim() ?? "";
   const [paciente, setPaciente] = useState<Partial<Paciente>>({
     ...emptyPaciente,
-    ...row.paciente,
+    ...pacienteBase,
     historiaClinica: initialHc,
     historiaClinicaNumero: initialHc,
     numeroHistoriaClinica: initialHc,
@@ -674,9 +747,15 @@ function HistoriaClinicaModal({
   const [step, setStep] = useState<"datos" | "habitos" | "antecedentes" | "gineco">("datos");
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [gineco, setGineco] = useState<AntecedentesGinecoObstetricos>({ ...emptyGineco });
+  const [gineco, setGineco] = useState<AntecedentesGinecoObstetricos>({
+    ...emptyGineco,
+    ...historiaExistente?.antecedentesGinecoObstetricos,
+  });
   // Para sexo "Otro" el profesional puede habilitar manualmente la pestaña gineco-obstétrica.
-  const [ginecoManual, setGinecoManual] = useState(false);
+  const [ginecoManual, setGinecoManual] = useState(
+    (pacienteBase.sexo ?? "").trim() === "Otro" &&
+      tieneDatosGineco({ ...emptyGineco, ...historiaExistente?.antecedentesGinecoObstetricos }),
+  );
   const [habitos, setHabitos] = useState<HabitosPersonales>({
     miccion: "",
     deposiciones: "",
@@ -689,18 +768,29 @@ function HistoriaClinicaModal({
     medicacionHabitual: "",
     actividadFisica: "",
     actividadFisicaObservacion: "",
+    ...historiaExistente?.habitosPersonales,
   });
   const [personalSearch, setPersonalSearch] = useState("");
   const [selectedPersonal, setSelectedPersonal] = useState<Cie10Diagnostico>();
-  const [personalAntecedentes, setPersonalAntecedentes] = useState<AntecedentePatologico[]>([]);
-  const [personalObservacion, setPersonalObservacion] = useState(row.paciente?.antecedentesPersonales ?? "");
+  const [personalAntecedentes, setPersonalAntecedentes] = useState<AntecedentePatologico[]>(
+    historiaExistente?.antecedentesPersonales ?? [],
+  );
+  const [personalObservacion, setPersonalObservacion] = useState(
+    historiaExistente?.antecedentesPersonalesObservacion ?? pacienteBase.antecedentesPersonales ?? "",
+  );
   const [familySearch, setFamilySearch] = useState("");
   const [familyMember, setFamilyMember] = useState("");
   const [selectedFamily, setSelectedFamily] = useState<Cie10Diagnostico>();
-  const [familyAntecedentes, setFamilyAntecedentes] = useState<AntecedenteFamiliar[]>([]);
-  const [familyObservacion, setFamilyObservacion] = useState(row.paciente?.antecedentesFamiliares ?? "");
-  const [antecedentesQuirurgicos, setAntecedentesQuirurgicos] = useState(row.paciente?.antecedentesQuirurgicos ?? "");
-  const [alergias, setAlergias] = useState(row.paciente?.alergias ?? "");
+  const [familyAntecedentes, setFamilyAntecedentes] = useState<AntecedenteFamiliar[]>(
+    historiaExistente?.antecedentesFamiliares ?? [],
+  );
+  const [familyObservacion, setFamilyObservacion] = useState(
+    historiaExistente?.antecedentesFamiliaresObservacion ?? pacienteBase.antecedentesFamiliares ?? "",
+  );
+  const [antecedentesQuirurgicos, setAntecedentesQuirurgicos] = useState(
+    historiaExistente?.antecedentesQuirurgicos ?? pacienteBase.antecedentesQuirurgicos ?? "",
+  );
+  const [alergias, setAlergias] = useState(historiaExistente?.alergias ?? pacienteBase.alergias ?? "");
 
   function ginecoDisponible(sexo?: string, manual = ginecoManual) {
     return esSexoFemenino(sexo) || ((sexo ?? "").trim() === "Otro" && manual);
@@ -814,25 +904,25 @@ function HistoriaClinicaModal({
   }
 
   function save() {
-    if (!row.paciente?.id) return;
-    if (hasHistoriaClinica(row.paciente)) {
-      onSaved(row);
+    if (!pacienteBase.id) return;
+    if (mode !== "edicion" && hasHistoriaClinica(pacienteBase)) {
+      onSaved({ paciente: pacienteBase, derivacion });
       return;
     }
     if (!validate()) return;
 
     const now = new Date().toISOString();
-    const cedula = paciente.cedula?.trim() || row.paciente.cedula;
+    const cedula = paciente.cedula?.trim() || pacienteBase.cedula;
     const normalizedPaciente = {
-      ...row.paciente,
+      ...pacienteBase,
       ...paciente,
-      id: row.paciente.id,
+      id: pacienteBase.id,
       cedula,
       historiaClinica: cedula,
       historiaClinicaNumero: cedula,
       numeroHistoriaClinica: cedula,
-      nombres: paciente.nombres?.trim() || row.paciente.nombres,
-      apellidos: paciente.apellidos?.trim() || row.paciente.apellidos,
+      nombres: paciente.nombres?.trim() || pacienteBase.nombres,
+      apellidos: paciente.apellidos?.trim() || pacienteBase.apellidos,
       sexo: paciente.sexo || "",
       telefono: paciente.telefono || "",
       correo: paciente.correo || paciente.correoInstitucional || "",
@@ -843,7 +933,7 @@ function HistoriaClinicaModal({
       antecedentesFamiliares: familyObservacion,
       antecedentesQuirurgicos,
       alergias: alergias.trim() || "No refiere",
-      fechaCreacion: row.paciente.fechaCreacion,
+      fechaCreacion: pacienteBase.fechaCreacion,
       fechaActualizacion: now,
     } as Paciente;
 
@@ -851,7 +941,7 @@ function HistoriaClinicaModal({
       paciente: normalizedPaciente,
       historia: {
         numeroHistoriaClinica: cedula,
-        medicoResponsable: currentUserId(),
+        medicoResponsable: historiaExistente?.medicoResponsable || currentUserId(),
         datosPersonales: normalizedPaciente,
         habitosPersonales: habitos,
         antecedentesPersonales: personalAntecedentes,
@@ -867,12 +957,12 @@ function HistoriaClinicaModal({
       },
     });
     setDirty(false);
-    const derivacion =
-      saved.paciente.id === row.derivacion.pacienteId
-        ? row.derivacion
-        : actualizarDerivacion(row.derivacion.id, { pacienteId: saved.paciente.id }) ??
-          row.derivacion;
-    onSaved({ ...row, derivacion, paciente: saved.paciente });
+    const derivacionActualizada = !derivacion
+      ? undefined
+      : saved.paciente.id === derivacion.pacienteId
+        ? derivacion
+        : actualizarDerivacion(derivacion.id, { pacienteId: saved.paciente.id }) ?? derivacion;
+    onSaved({ paciente: saved.paciente, derivacion: derivacionActualizada });
   }
 
   function addPersonalAntecedente() {
@@ -899,8 +989,12 @@ function HistoriaClinicaModal({
   return (
     <ModalFrame
       onClose={close}
-      title="Apertura de historia clínica"
-      subtitle="Complete los datos personales, hábitos y antecedentes para continuar a atención."
+      title={mode === "edicion" ? "Editar historia clínica" : "Apertura de historia clínica"}
+      subtitle={
+        mode === "edicion"
+          ? "Actualice los datos personales, hábitos y antecedentes. Editar no elimina el expediente."
+          : "Complete los datos personales, hábitos y antecedentes para continuar a atención."
+      }
       footer={
         <>
           <button
@@ -915,41 +1009,45 @@ function HistoriaClinicaModal({
             onClick={save}
             className="rounded-lg bg-[#D71920] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#B9151B]"
           >
-            Guardar historia clínica y continuar a atención
+            {mode === "edicion"
+              ? "Guardar cambios de la historia clínica"
+              : derivacion
+                ? "Guardar historia clínica y continuar a atención"
+                : "Guardar historia clínica"}
           </button>
         </>
       }
     >
+      <div className="ubu-modal-stepbar">
+        <div className="ubu-modal-stepbar-track">
+          {[
+            ["datos", "Datos personales"],
+            ["habitos", "Hábitos personales"],
+            ["antecedentes", "Antecedentes personales"],
+            ...(ginecoVisible ? [["gineco", "Antecedentes gineco-obstétricos"]] : []),
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setStep(key as typeof step)}
+              className={`ubu-modal-step ${step === key ? "is-active" : ""}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid gap-3 md:grid-cols-4">
         <Info label="Paciente" value={`${paciente.apellidos ?? ""} ${paciente.nombres ?? ""}`.trim()} />
         <Info label="Cédula" value={paciente.cedula ?? ""} />
         <Info label="Historia clínica" value={paciente.historiaClinicaNumero ?? ""} />
-        <Info label="Condición" value={hasHistoriaClinica(row.paciente) ? "HC activa" : "No consta en base"} />
+        <Info label="Condición" value={hasHistoriaClinica(pacienteBase) ? "HC activa" : "No consta en base"} />
       </div>
       {Object.keys(errors).length > 0 && (
         <div className="mt-4 rounded-md border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">
           Revise los campos marcados antes de guardar la historia clínica.
         </div>
       )}
-      <div className="mt-5 flex flex-wrap gap-2 border-b border-[#D7E3EC] pb-3">
-        {[
-          ["datos", "Datos personales"],
-          ["habitos", "Hábitos personales"],
-          ["antecedentes", "Antecedentes personales"],
-          ...(ginecoVisible ? [["gineco", "Antecedentes gineco-obstétricos"]] : []),
-        ].map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setStep(key as typeof step)}
-            className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
-              step === key ? "bg-[#005B84] text-white" : "border border-[#D7E3EC] text-[#082F49] hover:border-[#005B84]"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
 
       {step === "datos" && (
         <DatosPersonalesStep
@@ -1635,14 +1733,14 @@ function VitalSignsModal({ signos, onClose }: { signos: SignosVitales; onClose: 
 function VitalSignsPanel({ signos }: { signos: SignosVitales }) {
   return (
     <div className="mt-4 grid gap-3 md:grid-cols-3">
-      <Info label="PA" value={signos.presionArterial} />
-      <Info label="FC" value={signos.frecuenciaCardiaca} />
-      <Info label="FR" value={signos.frecuenciaRespiratoria} />
-      <Info label="Temperatura" value={signos.temperatura} />
-      <Info label="SpO2" value={signos.saturacionOxigeno} />
-      <Info label="Peso" value={signos.peso} />
-      <Info label="Talla" value={signos.talla} />
-      <Info label="IMC" value={signos.imc} />
+      <Info label="Presión arterial (mmHg)" value={signos.presionArterial} />
+      <Info label="Frecuencia cardíaca (lpm)" value={signos.frecuenciaCardiaca} />
+      <Info label="Frecuencia respiratoria (rpm)" value={signos.frecuenciaRespiratoria} />
+      <Info label="Temperatura (°C)" value={signos.temperatura} />
+      <Info label="Saturación O₂ (%)" value={signos.saturacionOxigeno} />
+      <Info label="Peso (kg)" value={signos.peso} />
+      <Info label="Talla (cm)" value={normalizarTallaCm(signos.talla)} />
+      <Info label="IMC (kg/m²)" value={signos.imc} />
       <Info label="Nota de enfermería" value={signos.observaciones} />
     </div>
   );
